@@ -71,7 +71,8 @@ QLabel#Clock {{ font-size: 18px; color: {TEXT}; font-weight: 600; }}
 QLabel#ConnSummary {{ font-size: 14px; font-weight: 600; }}
 QFrame#Tile, QFrame#Master {{ background: {PANEL}; border: 2px solid {EDGE}; border-radius: 12px; }}
 QLabel#TileName, QLabel#TileStatus, QLabel#Caption, QLabel#TileModel, QLabel#TileScan,
-QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal {{ background: transparent; }}
+QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal,
+QLabel#HeaderTitle, QLabel#HeaderSub, QLabel#Clock, QLabel#ConnSummary {{ background: transparent; }}
 QLabel#TileName {{ font-size: 19px; font-weight: 700; }}
 QLabel#TileStatus {{ font-size: 16px; font-weight: 700; }}
 QLabel#Caption {{ font-size: 12px; color: {MUTED}; }}
@@ -294,9 +295,26 @@ class ScanDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton("Cancel")
+        cancel.setFocusPolicy(Qt.NoFocus)   # keep keystrokes flowing to the dialog
         cancel.clicked.connect(self.reject)
+        ok = QPushButton("OK")
+        ok.setObjectName("Primary")
+        ok.setFocusPolicy(Qt.NoFocus)
+        ok.clicked.connect(self._submit)
         row.addWidget(cancel)
+        row.addWidget(ok)
         lay.addLayout(row)
+
+        # The dialog itself captures the scanner's keystrokes.
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.setFocus()
+
+    def _submit(self) -> None:
+        if self._buffer.strip():
+            self.accept()
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
