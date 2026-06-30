@@ -40,22 +40,18 @@ def _apply_pattern(value: str, scan_pattern: str | None) -> str:
     return match.group(0)
 
 
-def _take_digits(value: str, n: int, *, take_first: bool, digits_only: bool) -> int | None:
+def _take_digits(value: str, n: int, *, take_first: bool, digits_only: bool) -> str | None:
+    """Return the chosen digit substring as a STRING (leading zeros preserved)."""
+
     if digits_only:
         value = "".join(ch for ch in value if ch.isdigit())
     if n and n > 0:
         value = value[:n] if take_first else value[-n:]
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        log.warning("Could not parse %r as an integer", value)
-        return None
+    return value or None
 
 
-def extract_mo_number(value: str, scanner_cfg: ScannerConfig, compare_cfg: CompareConfig) -> int | None:
-    """Reduce a scanned MO barcode to its last-N-digits integer for comparison.
+def extract_mo_digits(value: str, scanner_cfg: ScannerConfig, compare_cfg: CompareConfig) -> str | None:
+    """Return the last-N digits of a scanned MO barcode (leading zeros kept).
 
     Returns ``None`` when no digits can be parsed from the scan.
     """
@@ -64,21 +60,31 @@ def extract_mo_number(value: str, scanner_cfg: ScannerConfig, compare_cfg: Compa
     return _take_digits(value, compare_cfg.mo_last_digits, take_first=False, digits_only=compare_cfg.digits_only)
 
 
-def extract_last_number(value: str, scanner_cfg: ScannerConfig, n: int, digits_only: bool = True) -> int | None:
-    """Reduce a scan to its last-N-digits integer (e.g. the Assembled Battery MO)."""
+def extract_last_digits(value: str, scanner_cfg: ScannerConfig, n: int, digits_only: bool = True) -> str | None:
+    """Return the last-N digits of a scan (e.g. the Assembled Battery MO), zeros kept."""
 
     value = _apply_pattern(value.strip("\r\n").strip(), scanner_cfg.scan_pattern)
     return _take_digits(value, n, take_first=False, digits_only=digits_only)
 
 
-def extract_battery_number(value: str, scanner_cfg: ScannerConfig, n: int, digits_only: bool = True) -> int | None:
-    """Reduce a scanned battery label to its first-N-digits integer.
-
-    Returns ``None`` when no digits can be parsed from the scan.
-    """
+def extract_battery_digits(value: str, scanner_cfg: ScannerConfig, n: int, digits_only: bool = True) -> str | None:
+    """Return the first-N digits of a scanned battery label (leading zeros kept)."""
 
     value = _apply_pattern(value.strip("\r\n").strip(), scanner_cfg.scan_pattern)
     return _take_digits(value, n, take_first=True, digits_only=digits_only)
+
+
+def recipe_to_digits(recipe: int, n: int) -> str:
+    """Format a recipe DINT as the last-N digits, zero-padded, for string comparison.
+
+    A DINT cannot itself store leading zeros, so it is padded to width ``n`` to
+    line up with the (zero-preserving) scanned digits.
+    """
+
+    text = str(int(recipe))
+    if n and n > 0:
+        return text.zfill(n)[-n:]
+    return text
 
 
 class BarcodeScanner(ABC):

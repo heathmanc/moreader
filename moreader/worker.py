@@ -21,7 +21,7 @@ import time
 from .config import Config
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier, State
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import extract_battery_number, extract_last_number, extract_mo_number
+from .scanner import extract_battery_digits, extract_last_digits, extract_mo_digits
 from .shift import ShiftDetector
 
 log = logging.getLogger(__name__)
@@ -226,9 +226,9 @@ class PLCWorker(threading.Thread):
             self._fail_verification()
             return
 
-        number = extract_mo_number(raw_mo, self.config.scanner, self.config.compare)
+        number = extract_mo_digits(raw_mo, self.config.scanner, self.config.compare)
         if number is None:
-            self.notifier._log("alarm", f"Invalid MO scan {raw_mo!r}: no number could be read.")
+            self.notifier._log("alarm", f"Invalid MO scan {raw_mo!r}: no digits could be read.")
             self._fail_verification()
             return
         self.notifier._log("info", f"Stuffed Element MO {number} → comparing to each encapsulator recipe.")
@@ -236,9 +236,10 @@ class PLCWorker(threading.Thread):
         connected = [e for e in self.encapsulators if e.connected]
         all_present = len(connected) == len(self.encapsulators)
         all_matched = all_present
+        last_n = self.config.compare.mo_last_digits
         for enc in connected:
             try:
-                matched = enc.evaluate(number)
+                matched = enc.evaluate(number, last_n)
             except PLCError as exc:
                 self._fail_enc(enc, exc)
                 all_matched = False
@@ -276,19 +277,19 @@ class PLCWorker(threading.Thread):
                 self._reset_battery()
                 self._fail_verification()
                 return
-            assembled_num = extract_last_number(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
-            self.battery_scanned = extract_battery_number(battery_text, self.config.scanner, sec.battery_first_digits)
+            assembled_digits = extract_last_digits(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
+            self.battery_scanned = extract_battery_digits(battery_text, self.config.scanner, sec.battery_first_digits)
             battery_ok = (
-                assembled_num is not None
+                assembled_digits is not None
                 and self.battery_scanned is not None
-                and assembled_num == self.battery_scanned
+                and assembled_digits == self.battery_scanned
             )
-            if assembled_num is None or self.battery_scanned is None:
+            if assembled_digits is None or self.battery_scanned is None:
                 self.notifier._log("alarm", "Assembled Battery MO or battery label unreadable — blocked.")
             elif battery_ok:
-                self.notifier._log("ok", f"Battery label {self.battery_scanned} matches Assembled MO {assembled_num}.")
+                self.notifier._log("ok", f"Battery label {self.battery_scanned} matches Assembled MO {assembled_digits}.")
             else:
-                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ Assembled MO {assembled_num}.")
+                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ Assembled MO {assembled_digits}.")
             self.battery_matched = battery_ok
 
         verified = all_matched and battery_ok

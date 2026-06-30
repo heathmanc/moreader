@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from moreader.config import CompareConfig, EncapsulatorConfig, MasterConfig, ScannerConfig
 from moreader.controller import EncapsulatorMonitor, MasterMonitor, State
 from moreader.plc import SimulatedEncapsulator, SimulatedMaster
-from moreader.scanner import extract_mo_number
+from moreader.scanner import extract_mo_digits
 
 
 def make_encap(recipe=1001):
@@ -27,20 +27,29 @@ def make_master():
 
 def test_encapsulator_match():
     link, mon = make_encap(1001)
-    assert mon.evaluate(1001) is True
+    assert mon.evaluate("1001", 4) is True
     assert mon.state is State.MATCH
 
 
 def test_encapsulator_mismatch():
     link, mon = make_encap(1001)
-    assert mon.evaluate(2002) is False
+    assert mon.evaluate("2002", 4) is False
     assert mon.state is State.MISMATCH
 
 
 def test_encapsulator_invalid_scan():
     link, mon = make_encap(1001)
-    assert mon.evaluate(None) is False
+    assert mon.evaluate(None, 4) is False
     assert mon.state is State.MISMATCH
+
+
+def test_encapsulator_leading_zeros_preserved():
+    # Recipe 42 should match a scan of 0042 (zeros kept), not 4200 or 0420.
+    link, mon = make_encap(42)
+    assert mon.evaluate("0042", 4) is True
+    assert mon.scanned == "0042"          # not stripped to "42"
+    assert mon.evaluate("4200", 4) is False
+    assert mon.evaluate("0420", 4) is False
 
 
 def test_encapsulator_is_read_only():
@@ -92,19 +101,23 @@ def test_master_cycle_stop():
     assert mon.cycle_stop is True
 
 
-# --- MO number extraction ----------------------------------------------------
+# --- MO digit extraction (strings, leading zeros preserved) -----------------
 
 SCAN = ScannerConfig(type="stdin")
 CMP = CompareConfig(mo_last_digits=4, digits_only=True)
 
 
 def test_last_four_digits_used():
-    assert extract_mo_number("MO-2024-981001", SCAN, CMP) == 1001
+    assert extract_mo_digits("MO-2024-981001", SCAN, CMP) == "1001"
 
 
 def test_digits_only_strips_separators():
-    assert extract_mo_number("12-34-56-78", SCAN, CMP) == 5678
+    assert extract_mo_digits("12-34-56-78", SCAN, CMP) == "5678"
+
+
+def test_leading_zeros_are_kept():
+    assert extract_mo_digits("MO-2024-980042", SCAN, CMP) == "0042"
 
 
 def test_non_numeric_returns_none():
-    assert extract_mo_number("NO-DIGITS-HERE", SCAN, CMP) is None
+    assert extract_mo_digits("NO-DIGITS-HERE", SCAN, CMP) is None

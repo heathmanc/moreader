@@ -9,7 +9,7 @@ heartbeat DINT is written to the master to prove the app is alive.
 from .config import Config, load_config, save_config
 from .controller import EncapsulatorMonitor, MasterMonitor, State
 from .plc import build_encapsulator, build_master
-from .scanner import build_scanner, extract_mo_number
+from .scanner import build_scanner, extract_mo_digits
 from .worker import PLCWorker
 
 __version__ = "0.4.0"
@@ -24,6 +24,6 @@ __all__ = [
     "build_encapsulator",
     "build_master",
     "build_scanner",
-    "extract_mo_number",
+    "extract_mo_digits",
     "PLCWorker",
 ]

@@ -81,6 +81,16 @@ def test_verify_clears_cycle_stop():
     assert worker.master.cycle_stop is False
 
 
+def test_leading_zeros_preserved_in_match_and_log():
+    worker = make_worker(recipes=(42, 42, 42))
+    worker._handle(CMD_VERIFY, "000000042")        # 9 chars, last 4 = "0042"
+    assert worker.master.mo_verified is True
+    assert worker.encapsulators[0].scanned == "0042"   # not stripped to "42"
+    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
+    assert any("0042" in t for t in texts)
+    assert not any("MO 42 " in t for t in texts)       # never logged stripped
+
+
 def test_mo_length_check_blocks_short_scan():
     worker = make_worker()
     worker._handle(CMD_VERIFY, "1001")          # too short (default length is 9)

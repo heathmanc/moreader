@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .plc import EncapsulatorLink, MasterLink
+from .scanner import recipe_to_digits
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class EncapsulatorResult:
     name: str
     state: State
     recipe: int | None
-    scanned: int | None
+    scanned: str | None
     matched: bool | None
 
 
@@ -47,7 +48,7 @@ class EncapsulatorMonitor:
         self.link = link
         self.state = State.DISCONNECTED
         self.recipe: int | None = None
-        self.scanned: int | None = None
+        self.scanned: str | None = None
         self.matched: bool | None = None
         self.connected = False
 
@@ -80,12 +81,20 @@ class EncapsulatorMonitor:
         self.scanned = None
         self.matched = None
 
-    def evaluate(self, number: int | None) -> bool:
-        """Compare a scanned number to this encapsulator's recipe DINT."""
+    def evaluate(self, scanned: str | None, last_n: int) -> bool:
+        """Compare the scanned MO digits (string, leading zeros kept) to the recipe.
+
+        The recipe DINT is zero-padded to the same width so a scan of ``0042``
+        matches a recipe of ``42`` without ever discarding the operator's zeros.
+        """
 
         self.recipe = self.link.read_recipe()
-        self.scanned = number
-        matched = number is not None and number == self.recipe
+        self.scanned = scanned
+        if scanned is None:
+            matched = False
+        else:
+            width = last_n if (last_n and last_n > 0) else len(scanned)
+            matched = scanned == recipe_to_digits(self.recipe, width)
         self.matched = matched
         self.state = State.MATCH if matched else State.MISMATCH
         return matched

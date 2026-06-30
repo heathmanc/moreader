@@ -12,7 +12,7 @@ import sys
 from .config import Config, ConfigError, load_or_default
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import ScannerError, build_scanner, extract_mo_number
+from .scanner import ScannerError, build_scanner, extract_mo_digits
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -71,11 +71,11 @@ def _run_headless(config: Config, simulate: bool) -> int:
                 break
             if not raw.strip():
                 continue
-            number = extract_mo_number(raw, config.scanner, config.compare)
+            number = extract_mo_digits(raw, config.scanner, config.compare)
             connected = [e for e in encs if e.connected]
             all_matched = len(connected) == len(encs)
             for enc in connected:
-                all_matched = enc.evaluate(number) and all_matched
+                all_matched = enc.evaluate(number, config.compare.mo_last_digits) and all_matched
             master.set_verified(all_matched)
             notifier.scan(number, [e.result() for e in encs], all_matched)
     except KeyboardInterrupt:
