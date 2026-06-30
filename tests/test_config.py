@@ -28,6 +28,8 @@ def test_three_encapsulators_and_master_by_default():
     assert cfg.plc.encapsulators[0].name == "Encapsulator 1"
     assert cfg.plc.master.name == "COS"
     assert cfg.plc.master.mo_verified_tag.name == "MO_Verified"
+    assert cfg.plc.master.mo_bypassed_tag.name == "MO_Bypassed"
+    assert cfg.plc.master.heartbeat_tag.name == "Heartbeat"
     assert cfg.plc.heartbeat_interval == 1.0
 
 

@@ -27,6 +27,7 @@ class State(str, Enum):
     MATCH = "MATCH"          # encapsulator recipe matched the scan
     MISMATCH = "MISMATCH"    # encapsulator recipe did not match
     VERIFIED = "VERIFIED"    # master: MO_Verified true
+    BYPASSED = "BYPASSED"    # master: operator bypass active
     DISCONNECTED = "DISCONNECTED"
 
 
@@ -100,6 +101,7 @@ class MasterMonitor:
         self.link = link
         self.state = State.DISCONNECTED
         self.mo_verified = False
+        self.mo_bypassed = False
         self.heartbeat = 0
         self.connected = False
 
@@ -110,10 +112,12 @@ class MasterMonitor:
     def connect(self) -> None:
         self.link.connect()
         self.connected = True
-        self.state = State.LOCKED
-        # Start safe.
+        # Start safe: nothing verified or bypassed.
         self.link.set_mo_verified(False)
+        self.link.set_mo_bypassed(False)
         self.mo_verified = False
+        self.mo_bypassed = False
+        self._recompute()
 
     def close(self) -> None:
         try:
@@ -126,10 +130,23 @@ class MasterMonitor:
         self.connected = False
         self.state = State.DISCONNECTED
 
+    def _recompute(self) -> None:
+        if self.mo_bypassed:
+            self.state = State.BYPASSED
+        elif self.mo_verified:
+            self.state = State.VERIFIED
+        else:
+            self.state = State.LOCKED
+
     def set_verified(self, verified: bool) -> None:
         self.link.set_mo_verified(verified)
         self.mo_verified = verified
-        self.state = State.VERIFIED if verified else State.LOCKED
+        self._recompute()
+
+    def set_bypassed(self, bypassed: bool) -> None:
+        self.link.set_mo_bypassed(bypassed)
+        self.mo_bypassed = bypassed
+        self._recompute()
 
     def beat(self) -> None:
         self.heartbeat = (self.heartbeat + 1) % HEARTBEAT_WRAP

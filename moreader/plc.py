@@ -147,6 +147,10 @@ class MasterLink(ABC):
         """Allow (True) or block (False) the master from running the product."""
 
     @abstractmethod
+    def set_mo_bypassed(self, bypassed: bool) -> None:
+        """Set the operator-bypass BOOL so the master may run without a verified scan."""
+
+    @abstractmethod
     def write_heartbeat(self, value: int) -> None:
         """Write the heartbeat DINT so the master knows the app is alive."""
 
@@ -169,6 +173,10 @@ class PylogixMaster(MasterLink, _PylogixConn):
     def set_mo_verified(self, verified: bool) -> None:
         self._write(self.cfg.mo_verified_tag.name, bool(verified))
 
+    def set_mo_bypassed(self, bypassed: bool) -> None:
+        if self.cfg.mo_bypassed_tag.name:
+            self._write(self.cfg.mo_bypassed_tag.name, bool(bypassed))
+
     def write_heartbeat(self, value: int) -> None:
         if self.cfg.heartbeat_tag.name:
             self._write(self.cfg.heartbeat_tag.name, int(value))
@@ -178,6 +186,7 @@ class SimulatedMaster(MasterLink):
     def __init__(self, cfg: MasterConfig | None = None) -> None:
         super().__init__(cfg or MasterConfig())
         self.mo_verified = False
+        self.mo_bypassed = False
         self.heartbeat = 0
         self.connected = False
 
@@ -190,6 +199,9 @@ class SimulatedMaster(MasterLink):
 
     def set_mo_verified(self, verified: bool) -> None:
         self.mo_verified = bool(verified)
+
+    def set_mo_bypassed(self, bypassed: bool) -> None:
+        self.mo_bypassed = bool(bypassed)
 
     def write_heartbeat(self, value: int) -> None:
         self.heartbeat = int(value)

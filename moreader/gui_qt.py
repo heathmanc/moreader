@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from .config import ENCAP_RECIPE, MASTER_TAGS, Config, ConfigError, from_dict, save_config
-from .worker import CMD_LOCKOUT, CMD_VERIFY, PLCWorker
+from .worker import CMD_BYPASS, CMD_LOCKOUT, CMD_VERIFY, PLCWorker
 
 # --- industrial palette ------------------------------------------------------
 BG = "#0e1620"
@@ -57,6 +57,7 @@ STATE = {
     "VERIFIED": ("#15321f", "#27c46b", "MO VERIFIED"),
     "MISMATCH": ("#3a1414", "#ef4444", "MISMATCH"),
     "LOCKED": ("#332708", "#eab308", "LOCKED — SCAN MO"),
+    "BYPASSED": ("#2a1a3a", "#a855f7", "MO BYPASSED"),
     "DISCONNECTED": ("#1a2533", "#5b6b7b", "OFFLINE"),
 }
 LOG_COLOR = {"ok": "#27c46b", "alarm": "#ef4444", "warn": "#eab308", "info": MUTED}
@@ -69,6 +70,8 @@ QWidget {{ background: {BG}; color: {TEXT}; font-family: 'Segoe UI', 'DejaVu San
 QLabel#Clock {{ font-size: 18px; color: {TEXT}; font-weight: 600; }}
 QLabel#ConnSummary {{ font-size: 14px; font-weight: 600; }}
 QFrame#Tile, QFrame#Master {{ background: {PANEL}; border: 2px solid {EDGE}; border-radius: 12px; }}
+QLabel#TileName, QLabel#TileStatus, QLabel#Caption, QLabel#TileModel, QLabel#TileScan,
+QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal {{ background: transparent; }}
 QLabel#TileName {{ font-size: 19px; font-weight: 700; }}
 QLabel#TileStatus {{ font-size: 16px; font-weight: 700; }}
 QLabel#Caption {{ font-size: 12px; color: {MUTED}; }}
@@ -84,6 +87,9 @@ QPushButton#Verify:hover {{ background: #1f6fd0; }}
 QPushButton#Lockout {{ background: #5a1d1d; color: #ffd7d7; font-size: 16px; font-weight: 800;
     border: 1px solid #7a2a2a; border-radius: 10px; padding: 18px; }}
 QPushButton#Lockout:hover {{ background: #6e2525; }}
+QPushButton#Bypass {{ background: #2a1a3a; color: #e3ccff; font-size: 16px; font-weight: 800;
+    border: 1px solid #5b3a7a; border-radius: 10px; padding: 18px; }}
+QPushButton#Bypass:hover {{ background: #38214d; }}
 QPushButton {{ background: {PANEL_HI}; color: {TEXT}; border: 1px solid {EDGE};
     border-radius: 8px; padding: 9px 16px; font-weight: 600; }}
 QPushButton:hover {{ background: {EDGE}; }}
@@ -232,7 +238,12 @@ class MasterPanel(QFrame):
             self.heart.setStyleSheet(f"color: {MUTED};")
             self.heart_val.setText("offline")
             return
-        self._apply("VERIFIED" if data.get("mo_verified") else "LOCKED")
+        if data.get("mo_bypassed"):
+            self._apply("BYPASSED")
+        elif data.get("mo_verified"):
+            self._apply("VERIFIED")
+        else:
+            self._apply("LOCKED")
         hb = data.get("heartbeat", 0)
         if hb != self._last_hb:
             self._pulse = not self._pulse
@@ -242,7 +253,12 @@ class MasterPanel(QFrame):
 
 
 class ScanDialog(QDialog):
-    """Modal dialog the USB scanner sends the MO barcode into."""
+    """Modal dialog the USB scanner sends the MO barcode into.
+
+    There is no editable text field: the dialog captures the scanner's
+    keystrokes directly and submits on the terminating Enter, so the operator
+    cannot type an order in by hand.
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -250,6 +266,7 @@ class ScanDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(560)
         self.setStyleSheet(STYLESHEET)
+        self._buffer = ""
         lay = QVBoxLayout(self)
         lay.setContentsMargins(34, 30, 34, 30)
         lay.setSpacing(16)
@@ -264,31 +281,42 @@ class ScanDialog(QDialog):
         hint.setAlignment(Qt.AlignCenter)
         lay.addWidget(hint)
 
-        self.field = QLineEdit()
-        self.field.setObjectName("ScanField")
-        self.field.setAlignment(Qt.AlignCenter)
-        self.field.setPlaceholderText("waiting for scan…")
-        self.field.returnPressed.connect(self._accept_if_filled)
-        lay.addWidget(self.field)
+        # Read-only display of what the scanner has sent — not an input box.
+        self.display = QLabel("waiting for scan…")
+        self.display.setObjectName("ScanDisplay")
+        self.display.setAlignment(Qt.AlignCenter)
+        self.display.setStyleSheet(
+            f"font-size: 30px; padding: 18px; font-family: 'Consolas', monospace;"
+            f"color: {TEXT}; background: {PANEL_HI}; border: 2px dashed {EDGE}; border-radius: 8px;"
+        )
+        lay.addWidget(self.display)
 
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
-        ok = QPushButton("Verify")
-        ok.setObjectName("Primary")
-        ok.clicked.connect(self._accept_if_filled)
         row.addWidget(cancel)
-        row.addWidget(ok)
         lay.addLayout(row)
-        self.field.setFocus()
 
-    def _accept_if_filled(self) -> None:
-        if self.field.text().strip():
-            self.accept()
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if self._buffer.strip():
+                self.accept()
+            return
+        if key == Qt.Key_Escape:
+            self.reject()
+            return
+        if key == Qt.Key_Backspace:
+            self._buffer = self._buffer[:-1]
+        else:
+            text = event.text()
+            if text and text.isprintable():
+                self._buffer += text
+        self.display.setText(self._buffer or "waiting for scan…")
 
     def value(self) -> str:
-        return self.field.text().strip()
+        return self._buffer.strip()
 
 
 class MainWindow(QWidget):
@@ -307,6 +335,7 @@ class MainWindow(QWidget):
         self.master_panel: MasterPanel | None = None
         self.cfg_widgets: dict = {}
         self.config_index = None
+        self._master_bypassed = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -384,6 +413,10 @@ class MainWindow(QWidget):
         verify.setObjectName("Verify")
         verify.clicked.connect(self._verify_mo)
         button_row.addWidget(verify, 3)
+        bypass = QPushButton("BYPASS\n(passworded)")
+        bypass.setObjectName("Bypass")
+        bypass.clicked.connect(self._toggle_bypass)
+        button_row.addWidget(bypass, 1)
         lockout = QPushButton("MANUAL\nLOCKOUT")
         lockout.setObjectName("Lockout")
         lockout.clicked.connect(self._manual_lockout)
@@ -405,6 +438,22 @@ class MainWindow(QWidget):
     def _manual_lockout(self) -> None:
         if self.worker:
             self.worker.submit(CMD_LOCKOUT)
+
+    def _toggle_bypass(self) -> None:
+        if not self.worker:
+            return
+        turning_on = not self._master_bypassed
+        verb = "enable" if turning_on else "clear"
+        password, ok = QInputDialog.getText(
+            self, "Bypass — password required",
+            f"Enter password to {verb} MO bypass:", QLineEdit.Password,
+        )
+        if not ok:
+            return
+        if password != self.config.security.password:
+            QMessageBox.warning(self, "Access denied", "Incorrect password.")
+            return
+        self.worker.submit(CMD_BYPASS, "on" if turning_on else "off")
 
     # -- settings -------------------------------------------------------
     def _open_settings(self) -> None:
@@ -706,6 +755,7 @@ class MainWindow(QWidget):
             for tile, data in zip(self.tiles, encs):
                 tile.update_from(data)
             master = event.get("master", {})
+            self._master_bypassed = bool(master.get("mo_bypassed"))
             if self.master_panel:
                 self.master_panel.update_from(master)
             online = sum(1 for m in encs if m.get("connected")) + (1 if master.get("connected") else 0)

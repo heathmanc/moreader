@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moreader.config import Config
 from moreader.controller import State
-from moreader.worker import CMD_LOCKOUT, CMD_VERIFY, PLCWorker
+from moreader.worker import CMD_BYPASS, CMD_LOCKOUT, CMD_VERIFY, PLCWorker
 
 
 def make_worker(recipes=(1001, 1001, 1001)):
@@ -62,6 +62,34 @@ def test_manual_lockout_clears_master():
     worker._handle(CMD_LOCKOUT, None)
     assert worker.master.mo_verified is False
     assert all(e.state is State.LOCKED for e in worker.encapsulators)
+
+
+def test_bypass_sets_master_bit():
+    worker = make_worker()
+    worker._handle(CMD_BYPASS, "on")
+    assert worker.master.mo_bypassed is True
+    assert worker.master.link.mo_bypassed is True
+    assert worker.master.state is State.BYPASSED
+
+
+def test_bypass_cleared_by_lockout():
+    worker = make_worker()
+    worker._handle(CMD_BYPASS, "on")
+    worker._handle(CMD_LOCKOUT, None)
+    assert worker.master.mo_bypassed is False
+    assert worker.master.link.mo_bypassed is False
+
+
+def test_bypass_cleared_by_shift_change():
+    cfg = Config()
+    worker = PLCWorker(cfg, simulate=True, events=queue.Queue())
+    worker._build()
+    worker._connect_all()
+    worker._handle(CMD_BYPASS, "on")
+    # Force a shift boundary by resetting the detector's baseline.
+    worker.detector._current_shift = -99
+    worker._housekeeping()
+    assert worker.master.mo_bypassed is False
 
 
 def test_invalid_scan_logs_alarm_and_no_verify():

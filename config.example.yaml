@@ -42,6 +42,9 @@ plc:
       mo_verified_tag:
         name: MO_Verified
         description: BOOL the program SETS true when the scan is verified (allows COS to run)
+      mo_bypassed_tag:
+        name: MO_Bypassed
+        description: BOOL the program SETS true when an operator bypasses verification (passworded; cleared at shift/lockout)
       heartbeat_tag:
         name: Heartbeat
         description: DINT the program increments so the master PLC knows the app is alive

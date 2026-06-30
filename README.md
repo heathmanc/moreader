@@ -27,9 +27,14 @@ is written to the master so it knows the application is alive.
   after a scan, MATCH (green) or MISMATCH (red); grey when offline.
 * **Master (COS) panel** — shows **MO VERIFIED** (green) or **LOCKED** (amber),
   plus a pulsing heartbeat indicator and its counter.
-* **VERIFY MO** — there is no text box; this button opens a modal dialog the USB
-  scanner sends the barcode into.
-* **MANUAL LOCKOUT** — clears `MO_Verified` on demand.
+* **VERIFY MO** — there is no text box anywhere; this button opens a modal dialog
+  that captures the USB scanner's keystrokes directly (the operator cannot type
+  an order in by hand).
+* **BYPASS** — passworded; sets `MO_Bypassed` so COS may run without a verified
+  scan. The master panel turns violet (MO BYPASSED).
+* **MANUAL LOCKOUT** — clears `MO_Verified` and `MO_Bypassed` on demand.
+
+`MO_Bypassed` is also cleared automatically at every shift change.
 
 **Settings** (password `2134chAP!@`, stored in the YAML) opens the configuration
 screen: tabs for **PLCs** (the three encapsulators and the master, each tag with
@@ -46,6 +51,7 @@ the interface.
 | ------------------- | ------------------ | ----- | ---- | ----------------------------------------- |
 | Encapsulator 1/2/3  | `recipe[0].Name`   | read  | DINT | recipe number the encapsulator is set to  |
 | COS (master)        | `MO_Verified`      | write | BOOL | true only when all recipes match the scan |
+| COS (master)        | `MO_Bypassed`      | write | BOOL | true when an operator bypasses (passworded; cleared at shift/lockout) |
 | COS (master)        | `Heartbeat`        | write | DINT | incremented every `heartbeat_interval` s  |
 
 ## Install

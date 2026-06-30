@@ -47,6 +47,8 @@ ENCAP_RECIPE = ("recipe_tag", "Recipe (DINT)", "recipe[0].Name",
 MASTER_TAGS: list[tuple[str, str, str, str]] = [
     ("mo_verified_tag", "MO Verified", "MO_Verified",
      "BOOL the program SETS true when the scan is verified (allows COS to run)"),
+    ("mo_bypassed_tag", "MO Bypassed", "MO_Bypassed",
+     "BOOL the program SETS true when an operator bypasses verification (passworded; cleared at shift/lockout)"),
     ("heartbeat_tag", "Heartbeat", "Heartbeat",
      "DINT the program increments so the master PLC knows the app is alive"),
 ]
@@ -83,8 +85,9 @@ class MasterConfig:
     name: str = "COS"
     ip_address: str = "192.168.1.10"
     slot: int = 0
-    mo_verified_tag: TagSpec = field(default_factory=lambda: TagSpec(MASTER_TAGS[0][2], MASTER_TAGS[0][3]))
-    heartbeat_tag: TagSpec = field(default_factory=lambda: TagSpec(MASTER_TAGS[1][2], MASTER_TAGS[1][3]))
+    mo_verified_tag: TagSpec = field(default_factory=lambda: TagSpec("MO_Verified", MASTER_TAGS[0][3]))
+    mo_bypassed_tag: TagSpec = field(default_factory=lambda: TagSpec("MO_Bypassed", MASTER_TAGS[1][3]))
+    heartbeat_tag: TagSpec = field(default_factory=lambda: TagSpec("Heartbeat", MASTER_TAGS[2][3]))
 
     def __post_init__(self) -> None:
         try:
@@ -229,12 +232,12 @@ def _master_from_dict(data: dict[str, Any]) -> MasterConfig:
     if not isinstance(tags, dict):
         raise ConfigError("master.tags must be a mapping")
     source = tags if any(a in tags for a in MASTER_TAG_ATTRS) else data
+    tag_kwargs = {attr: _tag(source, attr, defaults.tag(attr)) for attr in MASTER_TAG_ATTRS}
     return MasterConfig(
         name=data.get("name", defaults.name),
         ip_address=data.get("ip_address", defaults.ip_address),
         slot=data.get("slot", defaults.slot),
-        mo_verified_tag=_tag(source, "mo_verified_tag", defaults.mo_verified_tag),
-        heartbeat_tag=_tag(source, "heartbeat_tag", defaults.heartbeat_tag),
+        **tag_kwargs,
     )
 
 

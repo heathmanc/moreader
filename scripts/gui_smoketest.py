@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from moreader.config import Config
 from moreader.gui_qt import MainWindow, ScanDialog
-from moreader.worker import CMD_VERIFY
+from moreader.worker import CMD_BYPASS, CMD_VERIFY
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mo"
 
@@ -50,8 +50,14 @@ def main():
     pump(app, win)
     shot(win, f"{OUT}_op_mismatch.png")
 
+    # Operator bypass (normally passworded via the GUI button).
+    win.worker.submit(CMD_BYPASS, "on")
+    pump(app, win)
+    shot(win, f"{OUT}_op_bypassed.png")
+
     dlg = ScanDialog(win)
-    dlg.field.setText("MO-2024-1001")
+    dlg._buffer = "MO-2024-1001"
+    dlg.display.setText(dlg._buffer)
     dlg.show()
     QApplication.processEvents()
     dlg.grab().save(f"{OUT}_scan_dialog.png")

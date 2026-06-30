@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 # Command types (GUI -> worker)
 CMD_VERIFY = "verify"
 CMD_LOCKOUT = "lockout"
+CMD_BYPASS = "bypass"        # value "on"/"off"
 CMD_RECONNECT = "reconnect"
 CMD_SHUTDOWN = "shutdown"
 
@@ -147,8 +148,12 @@ class PLCWorker(threading.Thread):
             self._emit_status()
             return
         if command == CMD_LOCKOUT:
-            self.notifier._log("warn", "Manual lockout — MO_Verified cleared.")
+            self.notifier._log("warn", "Manual lockout — MO_Verified and MO_Bypassed cleared.")
             self._lockout()
+            self._emit_status()
+            return
+        if command == CMD_BYPASS:
+            self._bypass(value == "on")
             self._emit_status()
             return
         if command == CMD_VERIFY:
@@ -161,8 +166,23 @@ class PLCWorker(threading.Thread):
         if self.master and self.master.connected:
             try:
                 self.master.set_verified(False)
+                self.master.set_bypassed(False)   # bypass resets at shift/lockout
             except PLCError as exc:
                 self._fail_master(exc)
+
+    def _bypass(self, on: bool) -> None:
+        if not (self.master and self.master.connected):
+            self.notifier._log("alarm", "Cannot bypass — master not connected.")
+            return
+        try:
+            self.master.set_bypassed(on)
+        except PLCError as exc:
+            self._fail_master(exc)
+            return
+        if on:
+            self.notifier._log("warn", f"MO BYPASS ENABLED by operator — {self.master.name} may run without a verified scan.")
+        else:
+            self.notifier._log("info", "MO bypass cleared.")
 
     def _verify(self, raw: str) -> None:
         number = extract_mo_number(raw, self.config.scanner, self.config.compare)
@@ -219,8 +239,8 @@ class PLCWorker(threading.Thread):
             except PLCError as exc:
                 self._fail_master(exc)
 
-        # Time-based shift change clears verification.
-        running = self.master is not None and self.master.mo_verified
+        # Time-based shift change clears verification and bypass.
+        running = self.master is not None and (self.master.mo_verified or self.master.mo_bypassed)
         if self.detector.check() and running:
             self.notifier.shift_change(self.detector.current_shift_label())
             self._lockout()
@@ -267,6 +287,7 @@ class PLCWorker(threading.Thread):
             "name": self.master.name if self.master else "COS",
             "state": self.master.state.value if self.master else "DISCONNECTED",
             "mo_verified": self.master.mo_verified if self.master else False,
+            "mo_bypassed": self.master.mo_bypassed if self.master else False,
             "heartbeat": self.master.heartbeat if self.master else 0,
             "connected": self.master.connected if self.master else False,
         }

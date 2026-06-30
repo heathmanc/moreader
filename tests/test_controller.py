@@ -74,6 +74,16 @@ def test_master_heartbeat_increments_and_writes():
     assert link.heartbeat == 2
 
 
+def test_master_bypass_state():
+    link, mon = make_master()
+    mon.set_bypassed(True)
+    assert link.mo_bypassed is True
+    assert mon.state is State.BYPASSED
+    # Bypass takes priority over a (false) verified state.
+    mon.set_bypassed(False)
+    assert mon.state is State.LOCKED
+
+
 # --- MO number extraction ----------------------------------------------------
 
 SCAN = ScannerConfig(type="stdin")
