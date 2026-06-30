@@ -25,12 +25,33 @@ class ScannerError(Exception):
     """Raised when the scanner cannot be read."""
 
 
+def extract_model(value: str, pattern: str | None) -> str:
+    """Apply an optional regex to pull the model out of a richer barcode.
+
+    Prefers a named ``model`` group, then the first capture group, else the whole
+    match.  If the pattern does not match, the trimmed raw value is returned.
+    """
+
+    value = value.strip("\r\n")
+    if not pattern:
+        return value
+    compiled = re.compile(pattern)
+    match = compiled.search(value)
+    if not match:
+        log.warning("Scan %r did not match scan_pattern; using raw value", value)
+        return value
+    if "model" in (compiled.groupindex or {}):
+        return match.group("model")
+    if match.groups():
+        return match.group(1)
+    return match.group(0)
+
+
 class BarcodeScanner(ABC):
     """Reads one barcode per call."""
 
     def __init__(self, cfg: ScannerConfig) -> None:
         self.cfg = cfg
-        self._pattern = re.compile(cfg.scan_pattern) if cfg.scan_pattern else None
 
     @abstractmethod
     def _read_raw(self, prompt: str | None) -> str | None:
@@ -46,19 +67,7 @@ class BarcodeScanner(ABC):
         raw = self._read_raw(prompt)
         if raw is None:
             return None
-        raw = raw.strip("\r\n")
-        if self._pattern is None:
-            return raw
-        match = self._pattern.search(raw)
-        if not match:
-            log.warning("Scan %r did not match scan_pattern; using raw value", raw)
-            return raw
-        # Prefer a named 'model' group, else the first capture group, else whole.
-        if "model" in (self._pattern.groupindex or {}):
-            return match.group("model")
-        if match.groups():
-            return match.group(1)
-        return match.group(0)
+        return extract_model(raw, self.cfg.scan_pattern)
 
     def close(self) -> None:  # overridden where needed
         pass

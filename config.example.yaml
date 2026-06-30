@@ -1,42 +1,45 @@
-# moreader configuration -- copy to config.yaml and edit for your line.
+# moreader configuration.
+# This file is normally edited from the GUI's password-protected Configuration
+# screen, but you can also edit it by hand.  Copy it to config.yaml to start.
+
+security:
+  # Password required to open the Configuration screen in the GUI.
+  password: "2134chAP!@"
 
 plc:
-  # driver: "logix" (CompactLogix/ControlLogix/Micro800),
-  #         "slc"   (MicroLogix/SLC 500),
-  #         "simulated" (no hardware -- for testing)
+  # driver: "logix" (pylogix -> CompactLogix/ControlLogix)
+  #         "simulated" (no hardware -- for testing/demo)
   driver: logix
   ip_address: 192.168.1.10
-  slot: 0                       # ControlLogix CPU slot; 0 for CompactLogix/Micro800
+  slot: 0                       # ControlLogix CPU slot; 0 for CompactLogix
 
-  # --- Logix: use named tags. ---
-  # The tag that holds the model/part number the PLC is currently set to run.
-  expected_model_tag: Program:MainProgram.ModelNumber
-  # BOOL the program sets True when the scan matches -> your ladder gates the
-  # machine on this bit (the PLC will not run the product until it is True).
-  run_permit_tag: Program:MainProgram.ScanRunPermit
-  # BOOL the program sets True on a mismatch (drive an HMI alarm / light stack).
-  alarm_tag: Program:MainProgram.ScanMismatchAlarm
-  # Optional BOOL the PLC/HMI raises to request a shift-change lockout.
-  shift_request_tag: Program:MainProgram.ShiftChangeRequest
-  # Optional STRING the program writes the last scanned value to (HMI echo).
-  last_scan_tag: Program:MainProgram.LastScan
-
-  # --- SLC/MicroLogix example (driver: slc) would instead use file addresses ---
-  # expected_model_tag: ST10:0
-  # run_permit_tag: B3:0/0
-  # alarm_tag: B3:0/1
-  # shift_request_tag: B3:0/2
-  # last_scan_tag: ST10:1
+  # Each tag has a name (the PLC address) and a description shown in the GUI.
+  tags:
+    expected_model:
+      name: Program:MainProgram.ModelNumber
+      description: Model/part number the PLC is currently set to run (STRING)
+    run_permit:
+      name: Program:MainProgram.ScanRunPermit
+      description: BOOL the program SETS to allow the PLC to run the product
+    alarm:
+      name: Program:MainProgram.ScanMismatchAlarm
+      description: BOOL the program SETS when a scan does not match (HMI alarm)
+    shift_request:
+      name: Program:MainProgram.ShiftChangeRequest
+      description: Optional BOOL the PLC/HMI raises to force a re-scan
+    last_scan:
+      name: Program:MainProgram.LastScan
+      description: Optional STRING the program writes the last scanned value to
 
 scanner:
-  # type: "keyboard" (HID keyboard-wedge, the USB scanner default),
-  #       "serial"   (USB virtual COM port, needs pyserial),
-  #       "stdin"    (read piped input -- handy for testing)
+  # type: "keyboard" (HID keyboard-wedge -- types into the GUI scan box),
+  #       "serial"   (USB virtual COM port; headless mode only, needs pyserial),
+  #       "stdin"    (piped input -- for testing)
   type: keyboard
-  port: /dev/ttyACM0           # serial only
+  port: /dev/ttyACM0           # serial only (e.g. COM3 on Windows)
   baudrate: 9600               # serial only
-  # Optional regex to pull the model out of a richer MO barcode.  Use a named
-  # group called "model".  Example for "MO12345|MODEL=ABC-100|QTY=500":
+  # Optional regex with a named group "model" to pull the model out of a richer
+  # MO barcode, e.g. "MO12345|MODEL=ABC-100|QTY=500":
   # scan_pattern: 'MODEL=(?P<model>[^|]+)'
   scan_pattern: null
 
@@ -46,12 +49,10 @@ compare:
   collapse_internal_space: false
 
 shift:
-  # Clock times (HH:MM, local) at which a new shift begins.  Empty list disables
-  # time-based detection.
-  start_times:
+  start_times:                 # local HH:MM; empty list disables time-based detection
     - "06:00"
     - "14:00"
     - "22:00"
-  watch_plc_request: true      # also lock out on the PLC shift_request_tag edge
+  watch_plc_request: true      # also lock out on the PLC shift_request bit edge
   lock_on_startup: true        # require a scan before the first run after start
   poll_interval: 2.0           # seconds between shift-change checks while running
