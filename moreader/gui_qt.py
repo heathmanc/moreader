@@ -494,24 +494,32 @@ class MainWindow(QWidget):
         return page
 
     def _verify_mo(self) -> None:
-        steps = [(
-            "mo",
-            "SCAN MANUFACTURING ORDER",
-            "Scan the MO barcode. The last 4 digits are matched to every encapsulator.",
-        )]
-        if self.config.secondary.enabled:
-            label = self.config.secondary.label_name.upper()
-            steps.append((
-                "battery",
-                f"SCAN {label}",
-                f"Scan the battery label. Its first {self.config.secondary.battery_first_digits} digits must match the MO.",
-            ))
+        sec = self.config.secondary
+        n_last = self.config.compare.mo_last_digits
+        if sec.enabled:
+            steps = [
+                ("mo", f"SCAN {sec.stuffed_element_label.upper()}",
+                 f"Scan the Stuffed Element MO. Its last {n_last} digits are matched to every encapsulator."),
+                ("assembled_mo", f"SCAN {sec.assembled_mo_label.upper()}",
+                 f"Scan the Assembled Battery MO. Its last {sec.assembled_mo_last_digits} digits are matched to the battery label."),
+                ("battery", f"SCAN {sec.battery_label.upper()}",
+                 f"Scan the battery label. Its first {sec.battery_first_digits} digits must match the Assembled Battery MO."),
+            ]
+        else:
+            steps = [(
+                "mo", "SCAN MANUFACTURING ORDER",
+                f"Scan the MO barcode. The last {n_last} digits are matched to every encapsulator.",
+            )]
         dialog = ScanDialog(steps, self)
         if dialog.exec() != QDialog.Accepted or not self.worker:
             return
         vals = dialog.result_values()
-        if self.config.secondary.enabled:
-            self.worker.submit(CMD_VERIFY, {"mo": vals.get("mo", ""), "battery": vals.get("battery", "")})
+        if sec.enabled:
+            self.worker.submit(CMD_VERIFY, {
+                "mo": vals.get("mo", ""),
+                "assembled_mo": vals.get("assembled_mo", ""),
+                "battery": vals.get("battery", ""),
+            })
         else:
             self.worker.submit(CMD_VERIFY, vals.get("mo", ""))
 
@@ -683,24 +691,45 @@ class MainWindow(QWidget):
         grid = QGridLayout(w)
         grid.setColumnStretch(1, 1)
         self.cfg_widgets["secondary_enabled"] = QCheckBox(
-            "Require a second scan of the battery label and cross-check it against the MO"
+            "Require the Assembled Battery MO + battery-label cross-check (3-step scan)"
         )
         grid.addWidget(self.cfg_widgets["secondary_enabled"], 0, 0, 1, 3)
-        grid.addWidget(QLabel("Battery label name"), 1, 0)
-        self.cfg_widgets["secondary_label"] = QLineEdit()
-        grid.addWidget(self.cfg_widgets["secondary_label"], 1, 1)
-        grid.addWidget(QLabel("shown on the scan prompt"), 1, 2)
-        grid.addWidget(QLabel("Battery first N digits"), 2, 0)
+
+        note = QLabel("Battery label first digits are matched to the Assembled Battery MO's last digits.")
+        note.setStyleSheet(f"color: {MUTED};")
+        grid.addWidget(note, 1, 0, 1, 3)
+
+        grid.addWidget(QLabel("Stuffed Element MO label"), 2, 0)
+        self.cfg_widgets["stuffed_element_label"] = QLineEdit()
+        grid.addWidget(self.cfg_widgets["stuffed_element_label"], 2, 1, 1, 2)
+        grid.addWidget(QLabel("Assembled Battery MO label"), 3, 0)
+        self.cfg_widgets["assembled_mo_label"] = QLineEdit()
+        grid.addWidget(self.cfg_widgets["assembled_mo_label"], 3, 1, 1, 2)
+        grid.addWidget(QLabel("Battery label name"), 4, 0)
+        self.cfg_widgets["battery_label"] = QLineEdit()
+        grid.addWidget(self.cfg_widgets["battery_label"], 4, 1, 1, 2)
+
+        grid.addWidget(QLabel("Assembled MO last N digits"), 5, 0)
+        self.cfg_widgets["assembled_mo_last_digits"] = QSpinBox()
+        self.cfg_widgets["assembled_mo_last_digits"].setRange(1, 18)
+        grid.addWidget(self.cfg_widgets["assembled_mo_last_digits"], 5, 1)
+        grid.addWidget(QLabel("default 4"), 5, 2)
+        grid.addWidget(QLabel("Assembled MO scan length"), 6, 0)
+        self.cfg_widgets["assembled_mo_length"] = QSpinBox()
+        self.cfg_widgets["assembled_mo_length"].setRange(0, 64)
+        grid.addWidget(self.cfg_widgets["assembled_mo_length"], 6, 1)
+        grid.addWidget(QLabel("exact characters (0 = no check). Default 9."), 6, 2)
+        grid.addWidget(QLabel("Battery first N digits"), 7, 0)
         self.cfg_widgets["battery_first_digits"] = QSpinBox()
         self.cfg_widgets["battery_first_digits"].setRange(1, 18)
-        grid.addWidget(self.cfg_widgets["battery_first_digits"], 2, 1)
-        grid.addWidget(QLabel("leading digits compared to the MO number. Default 4."), 2, 2)
-        grid.addWidget(QLabel("Battery min scan length"), 3, 0)
+        grid.addWidget(self.cfg_widgets["battery_first_digits"], 7, 1)
+        grid.addWidget(QLabel("default 4"), 7, 2)
+        grid.addWidget(QLabel("Battery min scan length"), 8, 0)
         self.cfg_widgets["battery_min_length"] = QSpinBox()
         self.cfg_widgets["battery_min_length"].setRange(0, 64)
-        grid.addWidget(self.cfg_widgets["battery_min_length"], 3, 1)
-        grid.addWidget(QLabel("min characters (0 = no check). Default 10 — keeps it distinct from the MO."), 3, 2)
-        grid.setRowStretch(4, 1)
+        grid.addWidget(self.cfg_widgets["battery_min_length"], 8, 1)
+        grid.addWidget(QLabel("min characters (0 = no check). Default 10."), 8, 2)
+        grid.setRowStretch(9, 1)
         return w
 
     def _build_shift_tab(self) -> QWidget:
@@ -767,7 +796,11 @@ class MainWindow(QWidget):
         self.cfg_widgets["digits_only"].setChecked(c.compare.digits_only)
         self.cfg_widgets["mo_length"].setValue(c.compare.mo_length)
         self.cfg_widgets["secondary_enabled"].setChecked(c.secondary.enabled)
-        self.cfg_widgets["secondary_label"].setText(c.secondary.label_name)
+        self.cfg_widgets["stuffed_element_label"].setText(c.secondary.stuffed_element_label)
+        self.cfg_widgets["assembled_mo_label"].setText(c.secondary.assembled_mo_label)
+        self.cfg_widgets["battery_label"].setText(c.secondary.battery_label)
+        self.cfg_widgets["assembled_mo_last_digits"].setValue(c.secondary.assembled_mo_last_digits)
+        self.cfg_widgets["assembled_mo_length"].setValue(c.secondary.assembled_mo_length)
         self.cfg_widgets["battery_first_digits"].setValue(c.secondary.battery_first_digits)
         self.cfg_widgets["battery_min_length"].setValue(c.secondary.battery_min_length)
         self.cfg_widgets["start_times"].setText(", ".join(c.shift.start_times))
@@ -817,7 +850,11 @@ class MainWindow(QWidget):
             },
             "secondary": {
                 "enabled": self.cfg_widgets["secondary_enabled"].isChecked(),
-                "label_name": self.cfg_widgets["secondary_label"].text() or "Battery Label",
+                "stuffed_element_label": self.cfg_widgets["stuffed_element_label"].text() or "Stuffed Element MO",
+                "assembled_mo_label": self.cfg_widgets["assembled_mo_label"].text() or "Assembled Battery MO",
+                "battery_label": self.cfg_widgets["battery_label"].text() or "Battery Label",
+                "assembled_mo_last_digits": self.cfg_widgets["assembled_mo_last_digits"].value(),
+                "assembled_mo_length": self.cfg_widgets["assembled_mo_length"].value(),
                 "battery_first_digits": self.cfg_widgets["battery_first_digits"].value(),
                 "battery_min_length": self.cfg_widgets["battery_min_length"].value(),
             },

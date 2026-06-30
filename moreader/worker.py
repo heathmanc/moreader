@@ -21,7 +21,7 @@ import time
 from .config import Config
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier, State
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import extract_battery_number, extract_mo_number
+from .scanner import extract_battery_number, extract_last_number, extract_mo_number
 from .shift import ShiftDetector
 
 log = logging.getLogger(__name__)
@@ -161,9 +161,12 @@ class PLCWorker(threading.Thread):
         if command == CMD_VERIFY:
             self._verify(value)
 
-    def _lockout(self, cycle_stop: bool = False) -> None:
+    def _reset_battery(self) -> None:
         self.battery_scanned = None
         self.battery_matched = None
+
+    def _lockout(self, cycle_stop: bool = False) -> None:
+        self._reset_battery()
         for enc in self.encapsulators:
             if enc.connected:
                 enc.lock()
@@ -203,28 +206,32 @@ class PLCWorker(threading.Thread):
             self.notifier._log("info", "MO bypass cleared.")
 
     def _verify(self, payload) -> None:
-        # payload is either the raw MO string, or a dict {"mo": ..., "battery": ...}.
+        # payload is either the raw stuffed-element MO string, or a dict with
+        # {"mo": ..., "assembled_mo": ..., "battery": ...} when the battery scan
+        # is enabled.
         if isinstance(payload, dict):
             raw_mo = payload.get("mo", "")
+            raw_assembled = payload.get("assembled_mo")
             raw_battery = payload.get("battery")
         else:
             raw_mo = payload or ""
+            raw_assembled = None
             raw_battery = None
 
-        # Length checks guard against scanning the wrong/same barcode twice.
+        # --- Stuffed Element MO -> encapsulator recipe check ---
         mo_text = (raw_mo or "").strip("\r\n").strip()
         mo_len = self.config.compare.mo_length
         if mo_len and len(mo_text) != mo_len:
-            self.notifier._log("alarm", f"MO scan must be {mo_len} characters (got {len(mo_text)}) — blocked.")
+            self.notifier._log("alarm", f"Stuffed Element MO must be {mo_len} characters (got {len(mo_text)}) — blocked.")
             self._fail_verification()
             return
 
         number = extract_mo_number(raw_mo, self.config.scanner, self.config.compare)
         if number is None:
-            self.notifier._log("alarm", f"Invalid scan {raw_mo!r}: no number could be read.")
+            self.notifier._log("alarm", f"Invalid MO scan {raw_mo!r}: no number could be read.")
             self._fail_verification()
             return
-        self.notifier._log("info", f"Scanned MO → comparing {number} to each encapsulator recipe.")
+        self.notifier._log("info", f"Stuffed Element MO {number} → comparing to each encapsulator recipe.")
 
         connected = [e for e in self.encapsulators if e.connected]
         all_present = len(connected) == len(self.encapsulators)
@@ -245,30 +252,43 @@ class PLCWorker(threading.Thread):
         if not all_present:
             self.notifier._log("alarm", "Not all encapsulators are connected — cannot verify.")
 
-        # Optional secondary battery-label check.
+        # --- Assembled Battery MO vs battery label (optional) ---
         battery_ok = True
         if self.config.secondary.enabled:
+            sec = self.config.secondary
+            assembled_text = (raw_assembled or "").strip("\r\n").strip()
             battery_text = (raw_battery or "").strip("\r\n").strip()
-            min_len = self.config.secondary.battery_min_length
-            if min_len and len(battery_text) < min_len:
+            if sec.assembled_mo_length and len(assembled_text) != sec.assembled_mo_length:
                 self.notifier._log(
                     "alarm",
-                    f"Battery label scan must be at least {min_len} characters (got {len(battery_text)}) — blocked.",
+                    f"Assembled Battery MO must be {sec.assembled_mo_length} characters "
+                    f"(got {len(assembled_text)}) — blocked.",
                 )
-                self.battery_scanned = None
-                self.battery_matched = False
+                self._reset_battery()
                 self._fail_verification()
                 return
-            self.battery_scanned = extract_battery_number(
-                raw_battery or "", self.config.scanner, self.config.secondary.battery_first_digits
+            if sec.battery_min_length and len(battery_text) < sec.battery_min_length:
+                self.notifier._log(
+                    "alarm",
+                    f"Battery label must be at least {sec.battery_min_length} characters "
+                    f"(got {len(battery_text)}) — blocked.",
+                )
+                self._reset_battery()
+                self._fail_verification()
+                return
+            assembled_num = extract_last_number(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
+            self.battery_scanned = extract_battery_number(battery_text, self.config.scanner, sec.battery_first_digits)
+            battery_ok = (
+                assembled_num is not None
+                and self.battery_scanned is not None
+                and assembled_num == self.battery_scanned
             )
-            battery_ok = self.battery_scanned is not None and self.battery_scanned == number
-            if self.battery_scanned is None:
-                self.notifier._log("alarm", "Battery label scan unreadable — verification blocked.")
+            if assembled_num is None or self.battery_scanned is None:
+                self.notifier._log("alarm", "Assembled Battery MO or battery label unreadable — blocked.")
             elif battery_ok:
-                self.notifier._log("ok", f"Battery label {self.battery_scanned} matches MO {number}.")
+                self.notifier._log("ok", f"Battery label {self.battery_scanned} matches Assembled MO {assembled_num}.")
             else:
-                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ MO {number}.")
+                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ Assembled MO {assembled_num}.")
             self.battery_matched = battery_ok
 
         verified = all_matched and battery_ok

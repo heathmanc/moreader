@@ -44,8 +44,8 @@ def main():
     pump(app, win)
     shot(win, f"{OUT}_op_locked.png")
 
-    # Verified: MO + matching battery label (first 4 = 1001, >= 10 chars).
-    win.worker.submit(CMD_VERIFY, {"mo": MO_1001, "battery": "1001ABCDEFGH"})
+    # Verified: stuffed MO + assembled MO + matching battery label.
+    win.worker.submit(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": "770001001", "battery": "1001ABCDEFGH"})
     pump(app, win)
     shot(win, f"{OUT}_op_verified.png")
 
@@ -54,14 +54,14 @@ def main():
     pump(app, win)
     shot(win, f"{OUT}_op_lockout.png")
 
-    # Two-step scan dialog (MO then battery label).
+    # Three-step scan dialog (stuffed MO, assembled MO, battery label).
     steps = [
-        ("mo", "SCAN MANUFACTURING ORDER", "Scan the MO barcode. The last 4 digits are matched to every encapsulator."),
-        ("battery", "SCAN BATTERY LABEL", "Scan the battery label. Its first 4 digits must match the MO."),
+        ("mo", "SCAN STUFFED ELEMENT MO", "Scan the Stuffed Element MO. Its last 4 digits are matched to every encapsulator."),
+        ("assembled_mo", "SCAN ASSEMBLED BATTERY MO", "Scan the Assembled Battery MO. Its last 4 digits are matched to the battery label."),
+        ("battery", "SCAN BATTERY LABEL", "Scan the battery label. Its first 4 digits must match the Assembled Battery MO."),
     ]
     dlg = ScanDialog(steps, win)
-    dlg._buffer = "1001ABCDEFGH"
-    dlg.index = 1
+    dlg.index = 2
     dlg._show_step()
     dlg._buffer = "1001ABCDEFGH"
     dlg.display.setText(dlg._buffer)

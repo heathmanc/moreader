@@ -59,12 +59,20 @@ On a shift change or Manual Lockout, `CycleStopReq` is set true so the line
 finishes its current cycle and stops gracefully; a successful verify (or bypass)
 clears it.
 
-### Optional battery-label cross-check
+### Optional Assembled-Battery cross-check
 
-Enable **Battery Scan** in the configuration to add a second scan: after the MO,
-the operator scans the battery label, and its **first 4 digits** must match the
-MO number before `MO_Verified` is set. Scan-length checks (MO exactly 9
-characters, battery at least 10) prevent the same barcode being scanned twice.
+Enable **Battery Scan** in the configuration to require two different MOs. VERIFY
+MO then becomes a 3-step scan:
+
+1. **Stuffed Element MO** — its last 4 digits are matched to the encapsulator
+   recipes (the primary check).
+2. **Assembled Battery MO** — a *different* MO; its last 4 digits are taken.
+3. **Battery Label** — its first 4 digits must equal the Assembled Battery MO's
+   last 4.
+
+`MO_Verified` is set only when the encapsulators match step 1 **and** the battery
+label matches step 2. Scan-length checks (each MO exactly 9 characters, the
+battery label at least 10) prevent the same barcode being scanned twice.
 
 ## Install
 

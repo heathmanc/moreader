@@ -105,29 +105,53 @@ def test_bypass_cleared_by_lockout():
     assert worker.master.link.mo_bypassed is False
 
 
-def test_secondary_battery_scan_must_match_and_be_long_enough():
+# Assembled Battery MO: 9 chars ending in the model number.
+ASSEMBLED_1001 = "770001001"
+
+
+def test_secondary_battery_matches_assembled_mo():
     worker = make_worker(recipes=(1001, 1001, 1001))
     worker.config.secondary.enabled = True
-    # Battery label: first 4 digits 1001 (matches MO) and >= 10 chars long.
-    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "1001ABCDEFGH"})
+    # Stuffed MO -> encapsulators; battery first-4 (1001) == Assembled MO last-4 (1001).
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": ASSEMBLED_1001, "battery": "1001ABCDEFGH"})
     assert worker.master.mo_verified is True
     assert worker.battery_matched is True
 
 
-def test_secondary_battery_mismatch_blocks():
+def test_secondary_battery_vs_assembled_mismatch_blocks():
     worker = make_worker(recipes=(1001, 1001, 1001))
     worker.config.secondary.enabled = True
-    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "2002ABCDEFGH"})
+    # Battery first-4 (2002) != Assembled MO last-4 (1001).
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": ASSEMBLED_1001, "battery": "2002ABCDEFGH"})
     assert worker.master.mo_verified is False
+
+
+def test_secondary_uses_assembled_not_stuffed_mo():
+    # Even when the battery would match the stuffed MO, only the Assembled MO counts.
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker.config.secondary.enabled = True
+    # Stuffed MO last-4 = 1001 (matches encapsulators); Assembled MO last-4 = 2002;
+    # battery first-4 = 2002 -> matches the Assembled MO, so it verifies.
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": "770002002", "battery": "2002ABCDEFGH"})
+    assert worker.master.mo_verified is True
 
 
 def test_secondary_battery_too_short_blocks():
     worker = make_worker(recipes=(1001, 1001, 1001))
     worker.config.secondary.enabled = True
-    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "1001"})   # < 10 chars
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": ASSEMBLED_1001, "battery": "1001"})  # < 10
     assert worker.master.mo_verified is False
     texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
     assert any("at least 10 characters" in t for t in texts)
+
+
+def test_secondary_assembled_mo_wrong_length_blocks():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker.config.secondary.enabled = True
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "assembled_mo": "1001", "battery": "1001ABCDEFGH"})  # 4 chars
+    assert worker.master.mo_verified is False
+    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
+    assert any("Assembled Battery MO must be 9 characters" in t for t in texts)
 
 
 def test_bypass_cleared_by_shift_change():
@@ -147,7 +171,7 @@ def test_invalid_scan_logs_alarm_and_no_verify():
     worker._handle(CMD_VERIFY, "NODIGITSX")     # 9 chars (passes length) but no number
     assert worker.master.mo_verified is False
     texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
-    assert any("Invalid scan" in t for t in texts)
+    assert any("Invalid MO scan" in t for t in texts)
 
 
 def test_heartbeat_written_during_housekeeping():

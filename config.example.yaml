@@ -65,10 +65,14 @@ compare:
   digits_only: true            # strip non-digit characters before taking the last N
   mo_length: 9                  # required exact character count of the MO scan (0 = no check)
 
-secondary:                      # optional second scan of the battery label
+secondary:                      # optional Assembled Battery cross-check (3-step scan)
   enabled: false
-  label_name: Battery Label
-  battery_first_digits: 4       # leading digits of the battery label compared to the MO number
+  stuffed_element_label: Stuffed Element MO    # step 1 — last digits matched to the encapsulators
+  assembled_mo_label: Assembled Battery MO     # step 2 — a DIFFERENT MO
+  battery_label: Battery Label                 # step 3
+  assembled_mo_last_digits: 4   # last N digits of the Assembled Battery MO
+  assembled_mo_length: 9        # required exact length of the Assembled Battery MO scan (0 = no check)
+  battery_first_digits: 4       # first N digits of the battery label, compared to the Assembled MO last N
   battery_min_length: 10        # min characters of the battery scan (keeps it distinct from the MO)
 
 shift:

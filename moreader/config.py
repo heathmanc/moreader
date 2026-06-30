@@ -176,24 +176,36 @@ class ShiftConfig:
 
 @dataclass
 class SecondaryConfig:
-    """Optional second scan of the battery label, cross-checked against the MO."""
+    """Optional Assembled-Battery cross-check.
+
+    When enabled, after the Stuffed Element MO (the primary scan), the operator
+    scans a *different* MO — the Assembled Battery MO — and the battery label.
+    The battery label's first N digits must equal the Assembled Battery MO's
+    last N digits.
+    """
 
     enabled: bool = False
-    # Number of leading digits read off the battery label.
+    # Step labels shown on the scan prompts.
+    stuffed_element_label: str = "Stuffed Element MO"
+    assembled_mo_label: str = "Assembled Battery MO"
+    battery_label: str = "Battery Label"
+    # Last N digits taken from the Assembled Battery MO scan.
+    assembled_mo_last_digits: int = 4
+    # Required exact length of the Assembled Battery MO scan (0 = no check).
+    assembled_mo_length: int = 9
+    # First N digits taken from the battery label.
     battery_first_digits: int = 4
-    # Minimum length of the raw battery-label scan (0 = no check).  Combined with
-    # compare.mo_length this stops the operator scanning the same barcode twice.
+    # Minimum length of the battery-label scan (0 = no check).
     battery_min_length: int = 10
-    label_name: str = "Battery Label"
 
     def __post_init__(self) -> None:
         try:
+            self.assembled_mo_last_digits = int(self.assembled_mo_last_digits)
+            self.assembled_mo_length = int(self.assembled_mo_length)
             self.battery_first_digits = int(self.battery_first_digits)
             self.battery_min_length = int(self.battery_min_length)
         except (TypeError, ValueError):
-            raise ConfigError(
-                "secondary.battery_first_digits and secondary.battery_min_length must be integers"
-            )
+            raise ConfigError("secondary digit/length settings must be integers")
 
 
 @dataclass
