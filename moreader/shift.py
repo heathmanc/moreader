@@ -72,10 +72,8 @@ class ShiftDetector:
         return False
 
     def plc_request_edge(self, request_active: bool) -> bool:
-        """True on a rising edge of the PLC shift-change request bit."""
+        """True on a rising edge of an external shift-change request signal."""
 
-        if not self.cfg.watch_plc_request:
-            return False
         edge = request_active and not self._prev_request
         self._prev_request = request_active
         return edge

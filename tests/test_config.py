@@ -1,4 +1,4 @@
-"""Tests for config parsing, machines, tag descriptions, password, save/load."""
+"""Tests for config parsing: encapsulators, master, password, save/load."""
 
 import os
 import sys
@@ -22,73 +22,68 @@ def test_default_password_is_stored():
     assert Config().security.password == "2134chAP!@" == DEFAULT_PASSWORD
 
 
-def test_three_machines_by_default():
+def test_three_encapsulators_and_master_by_default():
     cfg = Config()
-    assert len(cfg.plc.machines) == 3
-    assert cfg.plc.machines[0].name == "Machine 1"
-    assert cfg.plc.machines[0].ip_address == "192.168.1.11"
+    assert len(cfg.plc.encapsulators) == 3
+    assert cfg.plc.encapsulators[0].name == "Encapsulator 1"
+    assert cfg.plc.master.name == "COS"
+    assert cfg.plc.master.mo_verified_tag.name == "MO_Verified"
+    assert cfg.plc.heartbeat_interval == 1.0
 
 
-def test_model_tag_default_and_description():
-    m = Config().plc.machines[0]
-    assert m.model_tag.name == "recipe[0].Name"
-    assert "DINT" in m.model_tag.description
+def test_recipe_tag_default_and_description():
+    e = Config().plc.encapsulators[0]
+    assert e.recipe_tag.name == "recipe[0].Name"
+    assert "DINT" in e.recipe_tag.description
 
 
-def test_from_dict_reads_machine_tags():
+def test_from_dict_reads_encapsulators_and_master():
     cfg = from_dict(
         {
             "plc": {
-                "machines": [
-                    {
-                        "name": "Press A",
-                        "ip_address": "10.0.0.5",
-                        "slot": 2,
-                        "tags": {
-                            "model_tag": {"name": "recipe[1].Name", "description": "the model"},
-                            "run_permit_tag": "PermitA",
-                        },
-                    }
-                ]
+                "encapsulators": [
+                    {"name": "Enc A", "ip_address": "10.0.0.5", "slot": 2,
+                     "tags": {"recipe_tag": {"name": "recipe[1].Name", "description": "d"}}},
+                ],
+                "master": {
+                    "name": "COS",
+                    "ip_address": "10.0.0.1",
+                    "tags": {"mo_verified_tag": "MO_OK", "heartbeat_tag": "HB"},
+                },
+                "heartbeat_interval": 2.5,
             }
         }
     )
-    assert len(cfg.plc.machines) == 1
-    m = cfg.plc.machines[0]
-    assert m.name == "Press A"
-    assert m.ip_address == "10.0.0.5"
-    assert m.slot == 2
-    assert m.model_tag.name == "recipe[1].Name"
-    assert m.run_permit_tag.name == "PermitA"
+    assert len(cfg.plc.encapsulators) == 1
+    assert cfg.plc.encapsulators[0].recipe_tag.name == "recipe[1].Name"
+    assert cfg.plc.master.ip_address == "10.0.0.1"
+    assert cfg.plc.master.mo_verified_tag.name == "MO_OK"
+    assert cfg.plc.master.heartbeat_tag.name == "HB"
+    assert cfg.plc.heartbeat_interval == 2.5
 
 
-def test_compare_defaults_last_four():
+def test_to_dict_roundtrip_preserves_structure():
     cfg = Config()
-    assert cfg.compare.mo_last_digits == 4
-    assert cfg.compare.digits_only is True
-
-
-def test_to_dict_roundtrip_preserves_machines():
-    cfg = Config()
-    cfg.plc.machines[2].model_tag.description = "custom desc"
+    cfg.plc.encapsulators[2].recipe_tag.description = "custom desc"
+    cfg.plc.master.mo_verified_tag.name = "Master.MO_Verified"
     cfg2 = from_dict(to_dict(cfg))
-    assert cfg2.plc.machines[2].model_tag.description == "custom desc"
-    assert cfg2.security.password == cfg.security.password
-    assert len(cfg2.plc.machines) == 3
+    assert cfg2.plc.encapsulators[2].recipe_tag.description == "custom desc"
+    assert cfg2.plc.master.mo_verified_tag.name == "Master.MO_Verified"
+    assert len(cfg2.plc.encapsulators) == 3
 
 
 def test_save_and_load_roundtrip(tmp_path):
     cfg = Config()
     cfg.security.password = "secret!"
-    cfg.plc.machines[0].ip_address = "172.16.1.20"
-    cfg.plc.machines[0].run_permit_tag.name = "Line1.Permit"
+    cfg.plc.encapsulators[0].ip_address = "172.16.1.20"
+    cfg.plc.master.heartbeat_tag.name = "COS.HB"
     cfg.compare.mo_last_digits = 6
     path = tmp_path / "config.yaml"
     save_config(cfg, path)
     loaded = load_config(path)
     assert loaded.security.password == "secret!"
-    assert loaded.plc.machines[0].ip_address == "172.16.1.20"
-    assert loaded.plc.machines[0].run_permit_tag.name == "Line1.Permit"
+    assert loaded.plc.encapsulators[0].ip_address == "172.16.1.20"
+    assert loaded.plc.master.heartbeat_tag.name == "COS.HB"
     assert loaded.compare.mo_last_digits == 6
 
 
@@ -102,9 +97,11 @@ def test_stale_config_keys_are_ignored():
     stale = {
         "scanner": {"type": "keyboard", "port": "/dev/ttyACM0", "baudrate": 9600},
         "compare": {"strip": True, "ignore_case": True, "collapse_internal_space": False},
-        "plc": {"driver": "logix", "ip_address": "192.168.1.10", "tags": {"expected_model": "X"}},
+        "shift": {"start_times": ["06:00"], "watch_plc_request": True, "lock_on_startup": True},
+        "plc": {"driver": "logix", "machines": [{"name": "old"}]},
     }
     cfg = from_dict(stale)
     assert cfg.scanner.type == "keyboard"
-    assert cfg.compare.mo_last_digits == 4   # falls back to the new default
-    assert len(cfg.plc.machines) == 3
+    assert cfg.compare.mo_last_digits == 4         # new default
+    assert len(cfg.plc.encapsulators) == 3         # falls back to defaults
+    assert cfg.plc.master.name == "COS"

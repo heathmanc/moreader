@@ -20,7 +20,7 @@ class Clock:
 
 def test_time_shift_change_fires_once_per_boundary():
     clock = Clock(datetime(2026, 6, 30, 5, 59))
-    cfg = ShiftConfig(start_times=["06:00", "14:00", "22:00"], watch_plc_request=False)
+    cfg = ShiftConfig(start_times=["06:00", "14:00", "22:00"])
     det = ShiftDetector(cfg, now=clock)
 
     assert det.check() is False               # still before 06:00
@@ -31,20 +31,14 @@ def test_time_shift_change_fires_once_per_boundary():
     assert det.check() is True                # crossed into the 14:00 shift
 
 
-def test_plc_request_rising_edge():
-    cfg = ShiftConfig(start_times=[], watch_plc_request=True)
+def test_external_request_rising_edge():
+    cfg = ShiftConfig(start_times=[])
     det = ShiftDetector(cfg)
     assert det.check(plc_request_active=False) is False
     assert det.check(plc_request_active=True) is True    # rising edge
     assert det.check(plc_request_active=True) is False   # held high, no repeat
     assert det.check(plc_request_active=False) is False
     assert det.check(plc_request_active=True) is True     # edge again
-
-
-def test_plc_request_ignored_when_disabled():
-    cfg = ShiftConfig(start_times=[], watch_plc_request=False)
-    det = ShiftDetector(cfg)
-    assert det.check(plc_request_active=True) is False
 
 
 def test_shift_label():

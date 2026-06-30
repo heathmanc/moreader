@@ -9,66 +9,59 @@ security:
 plc:
   # driver: "logix" (pylogix -> CompactLogix/ControlLogix) or "simulated" (no hardware)
   driver: logix
+  heartbeat_interval: 1.0       # seconds between heartbeat writes to the master
 
-  # Three PLCs, one per machine.  Each exposes the model number it is set to run
-  # as a DINT (default tag recipe[0].Name).  Each tag has a name and a
-  # description shown in the GUI.
-  machines:
-    - name: Machine 1
+  # Three read-only encapsulator PLCs. moreader reads only the recipe DINT.
+  encapsulators:
+    - name: Encapsulator 1
       ip_address: 192.168.1.11
       slot: 0
       tags:
-        model_tag:
+        recipe_tag:
           name: recipe[0].Name
-          description: DINT the PLC is currently set to run (compared to the scanned MO)
-        run_permit_tag:
-          name: ScanRunPermit
-          description: BOOL the program SETS to allow this PLC to run the product
-        alarm_tag:
-          name: ScanMismatchAlarm
-          description: BOOL the program SETS when the scan does not match this PLC
-        shift_request_tag:
-          name: ShiftChangeRequest
-          description: Optional BOOL the PLC/HMI raises to force a re-scan
-        last_scan_tag:
-          name: LastScanValue
-          description: Optional DINT the program writes the last scanned number to
-    - name: Machine 2
+          description: DINT recipe number this encapsulator is set to run
+    - name: Encapsulator 2
       ip_address: 192.168.1.12
       slot: 0
       tags:
-        model_tag: {name: recipe[0].Name, description: DINT the PLC is currently set to run}
-        run_permit_tag: {name: ScanRunPermit, description: Allow this PLC to run}
-        alarm_tag: {name: ScanMismatchAlarm, description: Mismatch alarm}
-        shift_request_tag: {name: ShiftChangeRequest, description: Force a re-scan}
-        last_scan_tag: {name: LastScanValue, description: Last scanned number}
-    - name: Machine 3
+        recipe_tag: {name: recipe[0].Name, description: DINT recipe number this encapsulator is set to run}
+    - name: Encapsulator 3
       ip_address: 192.168.1.13
       slot: 0
       tags:
-        model_tag: {name: recipe[0].Name, description: DINT the PLC is currently set to run}
-        run_permit_tag: {name: ScanRunPermit, description: Allow this PLC to run}
-        alarm_tag: {name: ScanMismatchAlarm, description: Mismatch alarm}
-        shift_request_tag: {name: ShiftChangeRequest, description: Force a re-scan}
-        last_scan_tag: {name: LastScanValue, description: Last scanned number}
+        recipe_tag: {name: recipe[0].Name, description: DINT recipe number this encapsulator is set to run}
+
+  # The master PLC (COS). moreader SETS MO_Verified true when the scan matches
+  # every encapsulator, clears it on shift change / manual lockout, and writes
+  # the heartbeat DINT on the interval above.
+  master:
+    name: COS
+    ip_address: 192.168.1.10
+    slot: 0
+    tags:
+      mo_verified_tag:
+        name: MO_Verified
+        description: BOOL the program SETS true when the scan is verified (allows COS to run)
+      heartbeat_tag:
+        name: Heartbeat
+        description: DINT the program increments so the master PLC knows the app is alive
 
 scanner:
   # type: "keyboard" (HID keyboard-wedge -> types into the scan popup) or
   #       "stdin" (piped input -- for testing/headless)
   type: keyboard
   # Optional regex with a named group "model" to pull the number out of a richer
-  # MO barcode before the last-N-digits rule is applied, e.g. 'MO(?P<model>\d+)'.
+  # MO barcode before the last-N-digits rule, e.g. 'MO(?P<model>\d+)'.
   scan_pattern: null
 
 compare:
-  mo_last_digits: 4            # compare only the last 4 digits of the scan (0 = whole number)
-  digits_only: true           # strip non-digit characters before taking the last N
+  mo_last_digits: 4             # compare only the last 4 digits of the scan (0 = whole number)
+  digits_only: true            # strip non-digit characters before taking the last N
 
 shift:
-  start_times:                # local HH:MM; empty list disables time-based detection
+  start_times:                 # local HH:MM; empty list disables time-based detection
     - "06:00"
     - "14:00"
     - "22:00"
-  watch_plc_request: true     # also lock out on a PLC shift_request bit edge
-  lock_on_startup: true       # require a scan before the first run after start
-  poll_interval: 2.0          # seconds between shift-change checks while running
+  lock_on_startup: true        # require a scan before the first run after start
+  poll_interval: 2.0           # seconds between shift-change checks while running

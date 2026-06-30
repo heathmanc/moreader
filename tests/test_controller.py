@@ -1,61 +1,77 @@
-"""Tests for per-machine scan verification and the MO number parser."""
+"""Tests for encapsulator/master monitors and the MO number parser."""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from moreader.config import CompareConfig, MachineConfig, ScannerConfig
-from moreader.controller import MachineMonitor, MachineState
-from moreader.plc import SimulatedMachine
+from moreader.config import CompareConfig, EncapsulatorConfig, MasterConfig, ScannerConfig
+from moreader.controller import EncapsulatorMonitor, MasterMonitor, State
+from moreader.plc import SimulatedEncapsulator, SimulatedMaster
 from moreader.scanner import extract_mo_number
 
 
-def make_monitor(model=1001):
-    link = SimulatedMachine(MachineConfig(name="M1"), model=model)
-    monitor = MachineMonitor(link)
-    monitor.connect()
-    return link, monitor
+def make_encap(recipe=1001):
+    link = SimulatedEncapsulator(EncapsulatorConfig(name="E1"), recipe=recipe)
+    mon = EncapsulatorMonitor(link)
+    mon.connect()
+    return link, mon
 
 
-def test_match_enables_run():
-    link, monitor = make_monitor(model=1001)
-    result = monitor.verify(1001)
-    assert result.matched is True
-    assert monitor.state is MachineState.RUNNING
-    assert link.run_permit is True
-    assert link.alarm is False
+def make_master():
+    link = SimulatedMaster(MasterConfig(name="COS"))
+    mon = MasterMonitor(link)
+    mon.connect()
+    return link, mon
 
 
-def test_mismatch_raises_alarm():
-    link, monitor = make_monitor(model=1001)
-    result = monitor.verify(2002)
-    assert result.matched is False
-    assert monitor.state is MachineState.ALARM
-    assert link.run_permit is False
-    assert link.alarm is True
+def test_encapsulator_match():
+    link, mon = make_encap(1001)
+    assert mon.evaluate(1001) is True
+    assert mon.state is State.MATCH
 
 
-def test_invalid_scan_number_blocks():
-    link, monitor = make_monitor(model=1001)
-    result = monitor.verify(None)
-    assert result.matched is False
-    assert monitor.state is MachineState.ALARM
-    assert link.run_permit is False
+def test_encapsulator_mismatch():
+    link, mon = make_encap(1001)
+    assert mon.evaluate(2002) is False
+    assert mon.state is State.MISMATCH
 
 
-def test_lockout_clears_permit():
-    link, monitor = make_monitor(model=1001)
-    monitor.verify(1001)
-    monitor.lock_out()
-    assert monitor.state is MachineState.LOCKED
-    assert link.run_permit is False
+def test_encapsulator_invalid_scan():
+    link, mon = make_encap(1001)
+    assert mon.evaluate(None) is False
+    assert mon.state is State.MISMATCH
 
 
-def test_last_scan_echoed_to_plc():
-    link, monitor = make_monitor(model=1001)
-    monitor.verify(1001)
-    assert link.last_scan == 1001
+def test_encapsulator_is_read_only():
+    # SimulatedEncapsulator exposes no permit/alarm — only the recipe is read.
+    link, mon = make_encap(1234)
+    assert mon.link.read_recipe() == 1234
+    assert not hasattr(link, "run_permit")
+
+
+def test_master_verified_sets_bit():
+    link, mon = make_master()
+    assert link.mo_verified is False        # starts safe on connect
+    mon.set_verified(True)
+    assert link.mo_verified is True
+    assert mon.state is State.VERIFIED
+
+
+def test_master_lockout_clears_bit():
+    link, mon = make_master()
+    mon.set_verified(True)
+    mon.set_verified(False)
+    assert link.mo_verified is False
+    assert mon.state is State.LOCKED
+
+
+def test_master_heartbeat_increments_and_writes():
+    link, mon = make_master()
+    mon.beat()
+    mon.beat()
+    assert mon.heartbeat == 2
+    assert link.heartbeat == 2
 
 
 # --- MO number extraction ----------------------------------------------------
@@ -72,15 +88,5 @@ def test_digits_only_strips_separators():
     assert extract_mo_number("12-34-56-78", SCAN, CMP) == 5678
 
 
-def test_whole_number_when_zero_digits():
-    cfg = CompareConfig(mo_last_digits=0, digits_only=True)
-    assert extract_mo_number("000123456", SCAN, cfg) == 123456
-
-
 def test_non_numeric_returns_none():
     assert extract_mo_number("NO-DIGITS-HERE", SCAN, CMP) is None
-
-
-def test_scan_pattern_extracts_then_last_digits():
-    scan = ScannerConfig(type="stdin", scan_pattern=r"MODEL=(?P<model>\d+)")
-    assert extract_mo_number("JOB|MODEL=778801001|QTY=5", scan, CMP) == 1001

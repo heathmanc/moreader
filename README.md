@@ -1,57 +1,52 @@
 # moreader
 
-Manufacturing-order scan verification for three Allen Bradley PLCs, with a
-PySide6 industrial-HMI front end.
+Manufacturing-order scan verification for a line of three encapsulator PLCs and
+a COS master PLC, with a PySide6 industrial-HMI front end.
 
-Each shift the incoming operator presses **VERIFY MO** and scans the
-manufacturing order. `moreader` takes the **last 4 digits** of the barcode and
-compares them to the model-number **DINT** each PLC is currently set to run
-(default tag `recipe[0].Name`). A machine whose model matches gets its **run
-permit**; a mismatch raises that machine's **alarm** and keeps it locked out.
+Each shift the operator presses **VERIFY MO** and scans the manufacturing order.
+`moreader` takes the **last 4 digits** of the barcode and compares them to the
+recipe **DINT** each encapsulator is set to run (default tag `recipe[0].Name`).
+When all three match, it sets the master's `MO_Verified` bit so COS can run. A
+shift change or **Manual Lockout** clears `MO_Verified`, and a **heartbeat** DINT
+is written to the master so it knows the application is alive.
 
 ```
-                              ┌─ PLC 1 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
- scan MO ─▶ last 4 digits ─▶ ─┼─ PLC 2 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
-                              └─ PLC 3 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
- shift change (clock or PLC bit) clears all run permits and forces a re-scan
+ scan MO ─▶ last 4 digits ─┬─ Encapsulator 1 recipe DINT ─┐
+                           ├─ Encapsulator 2 recipe DINT ─┤ all match?
+                           └─ Encapsulator 3 recipe DINT ─┘     │
+                                                                ▼
+                                   COS master:  MO_Verified = TRUE  (COS may run)
+   shift change / Manual Lockout ▶ MO_Verified = FALSE   ·   heartbeat DINT ++ every 1 s
 ```
 
 ## The HMI
 
-`python -m moreader` opens a full-screen-friendly industrial HMI:
+`python -m moreader` opens the operator screen:
 
-* **Operator screen** — three machine tiles (one per PLC), each with a status
-  lamp, the model DINT it is set to run, and the last scanned value. Tiles are
-  colour-coded: green = RUN ENABLED, red = ALARM, amber = LOCKED, grey =
-  OFFLINE. There is **no text box** — the operator presses the large **VERIFY
-  MO** button, which opens a modal dialog the USB scanner sends the barcode
-  into. A **NEW SHIFT** button re-locks all machines on demand.
-* **Configuration screen** — **password protected** (default `2134chAP!@`,
-  stored in the YAML). Tabs:
-  * **Machines** — per PLC: name, IP, slot, and every tag with its **name and
-    description**.
-  * **Scanner** — type and an optional model-extraction regex.
-  * **Compare** — how many trailing digits to match, digit-stripping.
-  * **Shift** — shift start times, PLC-request watch, lock-on-startup, poll rate.
-  * **Security** — change the configuration password.
+* **Three encapsulator tiles** (read-only) — each shows its recipe DINT and,
+  after a scan, MATCH (green) or MISMATCH (red); grey when offline.
+* **Master (COS) panel** — shows **MO VERIFIED** (green) or **LOCKED** (amber),
+  plus a pulsing heartbeat indicator and its counter.
+* **VERIFY MO** — there is no text box; this button opens a modal dialog the USB
+  scanner sends the barcode into.
+* **MANUAL LOCKOUT** — clears `MO_Verified` on demand.
 
-  **Save & Apply** writes the YAML and reconnects the PLCs.
+**Settings** (password `2134chAP!@`, stored in the YAML) opens the configuration
+screen: tabs for **PLCs** (the three encapsulators and the master, each tag with
+its name and description, plus the heartbeat interval), **Scanner**, **Compare**
+(trailing-digit rule), **Shift**, and **Security**. **Save & Apply** writes the
+YAML and reconnects.
 
 All PLC I/O runs on a background thread, so a slow or offline PLC never freezes
-the interface; the GUI polls the worker's event queue with a timer.
+the interface.
 
-## How a scan is matched
+## What moreader reads/writes
 
-1. The raw barcode is read in the scan dialog.
-2. An optional regex (`scanner.scan_pattern`) can pull the model out of a richer
-   MO string.
-3. Non-digits are stripped (configurable) and the **last N digits** are taken
-   (`compare.mo_last_digits`, default 4) and parsed as an integer.
-4. That integer is compared to each PLC's model DINT. Match → `run_permit` set,
-   alarm cleared; mismatch → `run_permit` cleared, `alarm` set.
-
-Your PLC ladder gates the machine by interlocking on its `run_permit` bit;
-`moreader` only sets/clears bits and reads the model DINT.
+| PLC                 | Tag                | Dir   | Type | Purpose                                   |
+| ------------------- | ------------------ | ----- | ---- | ----------------------------------------- |
+| Encapsulator 1/2/3  | `recipe[0].Name`   | read  | DINT | recipe number the encapsulator is set to  |
+| COS (master)        | `MO_Verified`      | write | BOOL | true only when all recipes match the scan |
+| COS (master)        | `Heartbeat`        | write | DINT | incremented every `heartbeat_interval` s  |
 
 ## Install
 
@@ -61,9 +56,7 @@ pip install -r requirements.txt
 #   sudo apt-get install libegl1 libgl1 libxkbcommon0 libfontconfig1
 ```
 
-* `PySide6` — the GUI.
-* `pylogix` — EtherNet/IP comms to CompactLogix / ControlLogix.
-* `pyyaml` — config file.
+* `PySide6` — the GUI.  `pylogix` — EtherNet/IP comms.  `pyyaml` — config.
 
 ## Run
 
@@ -71,42 +64,29 @@ pip install -r requirements.txt
 # GUI against real hardware (creates/uses ./config.yaml)
 python -m moreader --config config.yaml
 
-# GUI with NO hardware — three simulated PLCs (models 1001/1002/1003)
+# GUI with NO hardware — simulated PLCs (all recipes 1001)
 python -m moreader --simulate
 
 # Headless console mode (no display)
 python -m moreader --config config.yaml --headless
 ```
 
-In simulated mode, press **VERIFY MO** and scan/type `...1002` to enable only
-Machine 2; `...1001` enables Machine 1, etc. Open **Settings** with `2134chAP!@`
-to edit the PLC tags.
-
-## Configure
-
-Copy `config.example.yaml` to `config.yaml` (or let the GUI create it on the
-first **Save**). Per-PLC tags:
-
-| Purpose                          | Tag key            | Type   |
-| -------------------------------- | ------------------ | ------ |
-| Model the PLC is set to run      | `model_tag`        | DINT   |
-| Run permit (gate motion on this) | `run_permit_tag`   | BOOL   |
-| Scan-mismatch alarm              | `alarm_tag`        | BOOL   |
-| Shift-change request (optional)  | `shift_request_tag`| BOOL   |
-| Last-scan echo (optional)        | `last_scan_tag`    | DINT   |
+In simulated mode, press **VERIFY MO** and scan/type a value ending in `1001` to
+verify all three encapsulators and set the master. Open **Settings** with
+`2134chAP!@` to edit the PLC IPs and tags.
 
 ## Project layout
 
 | File                       | Responsibility                                   |
 | -------------------------- | ------------------------------------------------ |
-| `moreader/config.py`       | Load/validate/save YAML (machines, tags, etc.).  |
-| `moreader/plc.py`          | pylogix per-machine link + a simulated machine.  |
+| `moreader/config.py`       | Load/validate/save YAML (encapsulators, master). |
+| `moreader/plc.py`          | pylogix encapsulator (read) + master (write).    |
 | `moreader/scanner.py`      | Scan input + last-N-digit MO number parser.      |
-| `moreader/controller.py`   | Per-machine LOCKED/RUNNING/ALARM state machine.  |
-| `moreader/shift.py`        | Shift-change detection (clock + PLC bit edge).   |
-| `moreader/worker.py`       | Background thread driving all three PLCs.        |
-| `moreader/gui_qt.py`       | PySide6 industrial HMI.                          |
-| `moreader/cli.py`          | Entry point (GUI default, `--headless` option).  |
+| `moreader/controller.py`   | Encapsulator/master monitors + state.            |
+| `moreader/shift.py`        | Shift-change detection.                          |
+| `moreader/worker.py`       | Background thread; verification + heartbeat.     |
+| `moreader/gui_qt.py`       | PySide6 industrial HMI.                           |
+| `moreader/cli.py`          | Entry point (GUI default, `--headless`).         |
 | `scripts/gui_smoketest.py` | Offscreen GUI smoke test / screenshot driver.    |
 
 ## Tests
@@ -116,7 +96,7 @@ pip install pytest
 python -m pytest tests/ -q
 ```
 
-The 29 tests run entirely against simulated PLCs — no hardware required.
+The 28 tests run entirely against simulated PLCs — no hardware required.
 
 ## Safety note
 

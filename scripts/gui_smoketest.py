@@ -1,15 +1,9 @@
-"""Headless smoke test for the PySide6 GUI.
-
-Renders the operator screen and config screen to PNGs using the offscreen Qt
-platform, and drives the simulated flow.  Run with:
-
-    QT_QPA_PLATFORM=offscreen python3 scripts/gui_smoketest.py /tmp/moreader
-
-"""
+"""Headless smoke test for the PySide6 GUI (offscreen)."""
 
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -21,12 +15,10 @@ from moreader.config import Config
 from moreader.gui_qt import MainWindow, ScanDialog
 from moreader.worker import CMD_VERIFY
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/moreader"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mo"
 
 
-def pump(app, win, n=12):
-    # Let the worker connect/emit and the GUI drain events a few times.
-    import time
+def pump(app, win, n=14):
     for _ in range(n):
         win._drain_events()
         app.processEvents()
@@ -42,38 +34,40 @@ def shot(win, name):
 
 def main():
     app = QApplication.instance() or QApplication([])
-    cfgdir = tempfile.mkdtemp()
-    win = MainWindow(Config(), Path(cfgdir) / "config.yaml", simulate=True)
-    win.resize(1180, 760)
+    win = MainWindow(Config(), Path(tempfile.mkdtemp()) / "config.yaml", simulate=True)
+    win.resize(1180, 780)
     win.show()
     pump(app, win)
-    shot(win, f"{OUT}_operator_locked.png")
+    shot(win, f"{OUT}_op_locked.png")
 
-    # Scan that matches Machine 2 only (sim models 1001/1002/1003).
-    win.worker.submit(CMD_VERIFY, "MO-2024-1002")
+    # All sim recipes default to 1001; scanning ...1001 should verify all -> master VERIFIED.
+    win.worker.submit(CMD_VERIFY, "MO-2024-1001")
     pump(app, win)
-    shot(win, f"{OUT}_operator_scanned.png")
+    shot(win, f"{OUT}_op_verified.png")
 
-    # Render the scan dialog.
+    # A mismatching scan clears verification.
+    win.worker.submit(CMD_VERIFY, "MO-2024-9999")
+    pump(app, win)
+    shot(win, f"{OUT}_op_mismatch.png")
+
     dlg = ScanDialog(win)
-    dlg.field.setText("MO-2024-1002")
+    dlg.field.setText("MO-2024-1001")
     dlg.show()
     QApplication.processEvents()
     dlg.grab().save(f"{OUT}_scan_dialog.png")
     print("wrote", f"{OUT}_scan_dialog.png")
     dlg.close()
 
-    # Open configuration (bypass the password prompt for the screenshot).
     win.config_page = win._build_config_page()
     win.config_index = win.stack.addWidget(win.config_page)
     win._load_config_into_widgets()
     win.stack.setCurrentIndex(win.config_index)
     QApplication.processEvents()
-    shot(win, f"{OUT}_config_machines.png")
+    shot(win, f"{OUT}_config_plcs.png")
 
-    # Report final machine states.
-    for m in win.worker.monitors:
-        print(f"{m.name}: state={m.state.value} model={m.model} permit={m.link.run_permit}")
+    for e in win.worker.encapsulators:
+        print(f"{e.name}: state={e.state.value} recipe={e.recipe}")
+    print(f"master: verified={win.worker.master.mo_verified} hb={win.worker.master.heartbeat}")
     win.worker.shutdown()
 
 

@@ -1,7 +1,6 @@
 """Command-line entry point for moreader.
 
-By default this launches the PySide6 GUI.  ``--headless`` runs a console loop
-(useful for a terminal deployment or for testing without a display).
+By default this launches the PySide6 GUI.  ``--headless`` runs a console loop.
 """
 
 from __future__ import annotations
@@ -11,8 +10,8 @@ import logging
 import sys
 
 from .config import Config, ConfigError, load_or_default
-from .controller import MachineMonitor, Notifier
-from .plc import PLCError, build_machine
+from .controller import EncapsulatorMonitor, MasterMonitor, Notifier
+from .plc import PLCError, build_encapsulator, build_master
 from .scanner import ScannerError, build_scanner, extract_mo_number
 
 
@@ -20,9 +19,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="moreader",
         description=(
-            "Verify a scanned manufacturing-order barcode against the model "
-            "number (DINT) each of three Allen Bradley PLCs is set to run, "
-            "gating each machine on a shift-by-shift basis."
+            "Verify a scanned manufacturing-order barcode against the recipe "
+            "DINT of three encapsulator PLCs, and set the COS master's "
+            "MO_Verified bit when they all match."
         ),
     )
     parser.add_argument("-c", "--config", help="Path to YAML config file (defaults to ./config.yaml).")
@@ -34,28 +33,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _run_headless(config: Config, simulate: bool) -> int:
     driver = "simulated" if (simulate or config.plc.driver == "simulated") else config.plc.driver
-    sim_models = [1001, 1002, 1003]
-    monitors = []
-    for i, machine_cfg in enumerate(config.plc.machines):
-        link = build_machine(machine_cfg, driver, sim_model=sim_models[i % len(sim_models)])
-        monitors.append(MachineMonitor(link))
-
+    sim_recipes = [1001, 1001, 1001]
+    encs = [
+        EncapsulatorMonitor(build_encapsulator(c, driver, sim_recipe=sim_recipes[i % len(sim_recipes)]))
+        for i, c in enumerate(config.plc.encapsulators)
+    ]
+    master = MasterMonitor(build_master(config.plc.master, driver))
     notifier = Notifier()
-    for monitor in monitors:
+
+    for enc in encs:
         try:
-            monitor.connect()
+            enc.connect()
         except PLCError as exc:
-            print(f"{monitor.name}: connection failed — {exc}", file=sys.stderr)
+            print(f"{enc.name}: connection failed — {exc}", file=sys.stderr)
+    try:
+        master.connect()
+    except PLCError as exc:
+        print(f"{master.name}: connection failed — {exc}", file=sys.stderr)
 
-    connected = [m for m in monitors if m.connected]
-    if not connected:
-        print("No PLCs connected; exiting.", file=sys.stderr)
+    if not master.connected:
+        print("Master PLC not connected; exiting.", file=sys.stderr)
         return 1
-
     if config.shift.lock_on_startup:
         notifier.shift_change("startup")
-        for monitor in connected:
-            monitor.lock_out()
+        master.set_verified(False)
 
     try:
         scanner = build_scanner(config.scanner)
@@ -71,19 +72,23 @@ def _run_headless(config: Config, simulate: bool) -> int:
             if not raw.strip():
                 continue
             number = extract_mo_number(raw, config.scanner, config.compare)
-            results = [m.verify(number) for m in monitors if m.connected]
-            notifier.scan(number, results)
+            connected = [e for e in encs if e.connected]
+            all_matched = len(connected) == len(encs)
+            for enc in connected:
+                all_matched = enc.evaluate(number) and all_matched
+            master.set_verified(all_matched)
+            notifier.scan(number, [e.result() for e in encs], all_matched)
     except KeyboardInterrupt:
-        print("\nInterrupted; locking out all machines.")
-        for monitor in monitors:
-            if monitor.connected:
-                try:
-                    monitor.lock_out()
-                except PLCError:
-                    pass
+        print("\nInterrupted; clearing MO_Verified.")
+        if master.connected:
+            try:
+                master.set_verified(False)
+            except PLCError:
+                pass
     finally:
-        for monitor in monitors:
-            monitor.close()
+        for enc in encs:
+            enc.close()
+        master.close()
     return 0
 
 
