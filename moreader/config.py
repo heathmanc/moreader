@@ -49,10 +49,13 @@ MASTER_TAGS: list[tuple[str, str, str, str]] = [
      "BOOL the program SETS true when the scan is verified (allows COS to run)"),
     ("mo_bypassed_tag", "MO Bypassed", "MO_Bypassed",
      "BOOL the program SETS true when an operator bypasses verification (passworded; cleared at shift/lockout)"),
+    ("cycle_stop_tag", "Cycle Stop Request", "System.Mode.CycleStopReq",
+     "BOOL the program SETS true on a lockout/shift change to request a graceful cycle stop"),
     ("heartbeat_tag", "Heartbeat", "Heartbeat",
      "DINT the program increments so the master PLC knows the app is alive"),
 ]
 MASTER_TAG_ATTRS = [t[0] for t in MASTER_TAGS]
+MASTER_TAG_DEFAULTS = {attr: (name, desc) for attr, _label, name, desc in MASTER_TAGS}
 
 
 @dataclass
@@ -85,9 +88,10 @@ class MasterConfig:
     name: str = "COS"
     ip_address: str = "192.168.1.10"
     slot: int = 0
-    mo_verified_tag: TagSpec = field(default_factory=lambda: TagSpec("MO_Verified", MASTER_TAGS[0][3]))
-    mo_bypassed_tag: TagSpec = field(default_factory=lambda: TagSpec("MO_Bypassed", MASTER_TAGS[1][3]))
-    heartbeat_tag: TagSpec = field(default_factory=lambda: TagSpec("Heartbeat", MASTER_TAGS[2][3]))
+    mo_verified_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["mo_verified_tag"]))
+    mo_bypassed_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["mo_bypassed_tag"]))
+    cycle_stop_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["cycle_stop_tag"]))
+    heartbeat_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["heartbeat_tag"]))
 
     def __post_init__(self) -> None:
         try:
@@ -149,12 +153,16 @@ class CompareConfig:
 
     mo_last_digits: int = 4
     digits_only: bool = True
+    # Required exact length of the raw MO scan (0 = no length check).  Guards
+    # against scanning the wrong barcode (e.g. the battery label) for the MO.
+    mo_length: int = 9
 
     def __post_init__(self) -> None:
         try:
             self.mo_last_digits = int(self.mo_last_digits)
+            self.mo_length = int(self.mo_length)
         except (TypeError, ValueError):
-            raise ConfigError(f"compare.mo_last_digits must be an integer, got {self.mo_last_digits!r}")
+            raise ConfigError("compare.mo_last_digits and compare.mo_length must be integers")
 
 
 @dataclass
@@ -167,12 +175,35 @@ class ShiftConfig:
 
 
 @dataclass
+class SecondaryConfig:
+    """Optional second scan of the battery label, cross-checked against the MO."""
+
+    enabled: bool = False
+    # Number of leading digits read off the battery label.
+    battery_first_digits: int = 4
+    # Minimum length of the raw battery-label scan (0 = no check).  Combined with
+    # compare.mo_length this stops the operator scanning the same barcode twice.
+    battery_min_length: int = 10
+    label_name: str = "Battery Label"
+
+    def __post_init__(self) -> None:
+        try:
+            self.battery_first_digits = int(self.battery_first_digits)
+            self.battery_min_length = int(self.battery_min_length)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                "secondary.battery_first_digits and secondary.battery_min_length must be integers"
+            )
+
+
+@dataclass
 class Config:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     plc: PLCConfig = field(default_factory=PLCConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     compare: CompareConfig = field(default_factory=CompareConfig)
     shift: ShiftConfig = field(default_factory=ShiftConfig)
+    secondary: SecondaryConfig = field(default_factory=SecondaryConfig)
 
 
 # --- parsing -----------------------------------------------------------------
@@ -267,6 +298,7 @@ def from_dict(data: dict[str, Any]) -> Config:
         scanner=_build(ScannerConfig, _section(data, "scanner")),
         compare=_build(CompareConfig, _section(data, "compare")),
         shift=_build(ShiftConfig, _section(data, "shift")),
+        secondary=_build(SecondaryConfig, _section(data, "secondary")),
     )
 
 
@@ -303,6 +335,7 @@ def to_dict(config: Config) -> dict[str, Any]:
         "scanner": asdict(config.scanner),
         "compare": asdict(config.compare),
         "shift": asdict(config.shift),
+        "secondary": asdict(config.secondary),
     }
 
 

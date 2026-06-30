@@ -102,6 +102,7 @@ class MasterMonitor:
         self.state = State.DISCONNECTED
         self.mo_verified = False
         self.mo_bypassed = False
+        self.cycle_stop = False
         self.heartbeat = 0
         self.connected = False
 
@@ -112,11 +113,13 @@ class MasterMonitor:
     def connect(self) -> None:
         self.link.connect()
         self.connected = True
-        # Start safe: nothing verified or bypassed.
+        # Start safe: nothing verified, bypassed, or requesting a cycle stop.
         self.link.set_mo_verified(False)
         self.link.set_mo_bypassed(False)
+        self.link.set_cycle_stop(False)
         self.mo_verified = False
         self.mo_bypassed = False
+        self.cycle_stop = False
         self._recompute()
 
     def close(self) -> None:
@@ -147,6 +150,10 @@ class MasterMonitor:
         self.link.set_mo_bypassed(bypassed)
         self.mo_bypassed = bypassed
         self._recompute()
+
+    def set_cycle_stop(self, requested: bool) -> None:
+        self.link.set_cycle_stop(requested)
+        self.cycle_stop = requested
 
     def beat(self) -> None:
         self.heartbeat = (self.heartbeat + 1) % HEARTBEAT_WRAP

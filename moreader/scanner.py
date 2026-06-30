@@ -25,33 +25,26 @@ class ScannerError(Exception):
     """Raised when the scanner cannot be read."""
 
 
-def extract_mo_number(value: str, scanner_cfg: ScannerConfig, compare_cfg: CompareConfig) -> int | None:
-    """Reduce a raw scanned barcode to the integer used for comparison.
+def _apply_pattern(value: str, scan_pattern: str | None) -> str:
+    if not scan_pattern:
+        return value
+    compiled = re.compile(scan_pattern)
+    match = compiled.search(value)
+    if not match:
+        log.warning("Scan %r did not match scan_pattern; using raw value", value)
+        return value
+    if "model" in (compiled.groupindex or {}):
+        return match.group("model")
+    if match.groups():
+        return match.group(1)
+    return match.group(0)
 
-    Returns ``None`` when no digits can be parsed from the scan.
-    """
 
-    value = value.strip("\r\n").strip()
-    if scanner_cfg.scan_pattern:
-        compiled = re.compile(scanner_cfg.scan_pattern)
-        match = compiled.search(value)
-        if match:
-            if "model" in (compiled.groupindex or {}):
-                value = match.group("model")
-            elif match.groups():
-                value = match.group(1)
-            else:
-                value = match.group(0)
-        else:
-            log.warning("Scan %r did not match scan_pattern; using raw value", value)
-
-    if compare_cfg.digits_only:
+def _take_digits(value: str, n: int, *, take_first: bool, digits_only: bool) -> int | None:
+    if digits_only:
         value = "".join(ch for ch in value if ch.isdigit())
-
-    n = compare_cfg.mo_last_digits
     if n and n > 0:
-        value = value[-n:]
-
+        value = value[:n] if take_first else value[-n:]
     if not value:
         return None
     try:
@@ -59,6 +52,26 @@ def extract_mo_number(value: str, scanner_cfg: ScannerConfig, compare_cfg: Compa
     except ValueError:
         log.warning("Could not parse %r as an integer", value)
         return None
+
+
+def extract_mo_number(value: str, scanner_cfg: ScannerConfig, compare_cfg: CompareConfig) -> int | None:
+    """Reduce a scanned MO barcode to its last-N-digits integer for comparison.
+
+    Returns ``None`` when no digits can be parsed from the scan.
+    """
+
+    value = _apply_pattern(value.strip("\r\n").strip(), scanner_cfg.scan_pattern)
+    return _take_digits(value, compare_cfg.mo_last_digits, take_first=False, digits_only=compare_cfg.digits_only)
+
+
+def extract_battery_number(value: str, scanner_cfg: ScannerConfig, n: int, digits_only: bool = True) -> int | None:
+    """Reduce a scanned battery label to its first-N-digits integer.
+
+    Returns ``None`` when no digits can be parsed from the scan.
+    """
+
+    value = _apply_pattern(value.strip("\r\n").strip(), scanner_cfg.scan_pattern)
+    return _take_digits(value, n, take_first=True, digits_only=digits_only)
 
 
 class BarcodeScanner(ABC):

@@ -52,7 +52,19 @@ the interface.
 | Encapsulator 1/2/3  | `recipe[0].Name`   | read  | DINT | recipe number the encapsulator is set to  |
 | COS (master)        | `MO_Verified`      | write | BOOL | true only when all recipes match the scan |
 | COS (master)        | `MO_Bypassed`      | write | BOOL | true when an operator bypasses (passworded; cleared at shift/lockout) |
+| COS (master)        | `System.Mode.CycleStopReq` | write | BOOL | true on lockout/shift change for a graceful cycle stop |
 | COS (master)        | `Heartbeat`        | write | DINT | incremented every `heartbeat_interval` s  |
+
+On a shift change or Manual Lockout, `CycleStopReq` is set true so the line
+finishes its current cycle and stops gracefully; a successful verify (or bypass)
+clears it.
+
+### Optional battery-label cross-check
+
+Enable **Battery Scan** in the configuration to add a second scan: after the MO,
+the operator scans the battery label, and its **first 4 digits** must match the
+MO number before `MO_Verified` is set. Scan-length checks (MO exactly 9
+characters, battery at least 10) prevent the same barcode being scanned twice.
 
 ## Install
 

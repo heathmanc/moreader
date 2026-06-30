@@ -29,8 +29,18 @@ def test_three_encapsulators_and_master_by_default():
     assert cfg.plc.master.name == "COS"
     assert cfg.plc.master.mo_verified_tag.name == "MO_Verified"
     assert cfg.plc.master.mo_bypassed_tag.name == "MO_Bypassed"
+    assert cfg.plc.master.cycle_stop_tag.name == "System.Mode.CycleStopReq"
     assert cfg.plc.master.heartbeat_tag.name == "Heartbeat"
     assert cfg.plc.heartbeat_interval == 1.0
+
+
+def test_compare_and_secondary_defaults():
+    cfg = Config()
+    assert cfg.compare.mo_last_digits == 4
+    assert cfg.compare.mo_length == 9
+    assert cfg.secondary.enabled is False
+    assert cfg.secondary.battery_first_digits == 4
+    assert cfg.secondary.battery_min_length == 10
 
 
 def test_recipe_tag_default_and_description():
@@ -80,13 +90,19 @@ def test_save_and_load_roundtrip(tmp_path):
     cfg.plc.encapsulators[0].ip_address = "172.16.1.20"
     cfg.plc.master.heartbeat_tag.name = "COS.HB"
     cfg.compare.mo_last_digits = 6
+    cfg.plc.master.cycle_stop_tag.name = "COS.CycleStop"
+    cfg.secondary.enabled = True
+    cfg.secondary.battery_min_length = 12
     path = tmp_path / "config.yaml"
     save_config(cfg, path)
     loaded = load_config(path)
     assert loaded.security.password == "secret!"
     assert loaded.plc.encapsulators[0].ip_address == "172.16.1.20"
     assert loaded.plc.master.heartbeat_tag.name == "COS.HB"
+    assert loaded.plc.master.cycle_stop_tag.name == "COS.CycleStop"
     assert loaded.compare.mo_last_digits == 6
+    assert loaded.secondary.enabled is True
+    assert loaded.secondary.battery_min_length == 12
 
 
 def test_invalid_driver_rejected():

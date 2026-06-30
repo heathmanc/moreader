@@ -45,6 +45,9 @@ plc:
       mo_bypassed_tag:
         name: MO_Bypassed
         description: BOOL the program SETS true when an operator bypasses verification (passworded; cleared at shift/lockout)
+      cycle_stop_tag:
+        name: System.Mode.CycleStopReq
+        description: BOOL the program SETS true on a lockout/shift change to request a graceful cycle stop
       heartbeat_tag:
         name: Heartbeat
         description: DINT the program increments so the master PLC knows the app is alive
@@ -60,6 +63,13 @@ scanner:
 compare:
   mo_last_digits: 4             # compare only the last 4 digits of the scan (0 = whole number)
   digits_only: true            # strip non-digit characters before taking the last N
+  mo_length: 9                  # required exact character count of the MO scan (0 = no check)
+
+secondary:                      # optional second scan of the battery label
+  enabled: false
+  label_name: Battery Label
+  battery_first_digits: 4       # leading digits of the battery label compared to the MO number
+  battery_min_length: 10        # min characters of the battery scan (keeps it distinct from the MO)
 
 shift:
   start_times:                 # local HH:MM; empty list disables time-based detection

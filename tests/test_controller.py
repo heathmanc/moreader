@@ -84,6 +84,14 @@ def test_master_bypass_state():
     assert mon.state is State.LOCKED
 
 
+def test_master_cycle_stop():
+    link, mon = make_master()
+    assert link.cycle_stop is False        # cleared on connect
+    mon.set_cycle_stop(True)
+    assert link.cycle_stop is True
+    assert mon.cycle_stop is True
+
+
 # --- MO number extraction ----------------------------------------------------
 
 SCAN = ScannerConfig(type="stdin")

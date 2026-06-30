@@ -201,6 +201,9 @@ class MasterPanel(QFrame):
         cap = QLabel("MASTER RUN GATE (MO_Verified)")
         cap.setObjectName("Caption")
         left.addWidget(cap)
+        self.flags_lbl = QLabel("")
+        self.flags_lbl.setObjectName("Caption")
+        left.addWidget(self.flags_lbl)
         lay.addLayout(left)
         lay.addStretch(1)
 
@@ -232,12 +235,13 @@ class MasterPanel(QFrame):
         self.status_lbl.setStyleSheet(f"color: {accent};")
         self.lamp.set_color(accent)
 
-    def update_from(self, data: dict) -> None:
+    def update_from(self, data: dict, secondary: dict | None = None) -> None:
         self.name_lbl.setText(f"{data.get('name', 'COS')}  ·  MASTER")
         if not data.get("connected", False):
             self._apply("DISCONNECTED")
             self.heart.setStyleSheet(f"color: {MUTED};")
             self.heart_val.setText("offline")
+            self.flags_lbl.setText("")
             return
         if data.get("mo_bypassed"):
             self._apply("BYPASSED")
@@ -252,35 +256,59 @@ class MasterPanel(QFrame):
         self.heart.setStyleSheet(f"color: {'#ef4444' if self._pulse else '#7a2a2a'};")
         self.heart_val.setText(str(hb))
 
+        flags = []
+        if data.get("cycle_stop"):
+            flags.append("⏹ CYCLE STOP REQUESTED")
+        if secondary and secondary.get("enabled"):
+            matched = secondary.get("matched")
+            scanned = secondary.get("scanned")
+            if matched is None:
+                flags.append("Battery: —")
+            elif matched:
+                flags.append(f"Battery ✓ {scanned}")
+            else:
+                flags.append("Battery ✗")
+        self.flags_lbl.setText("    ".join(flags))
+
 
 class ScanDialog(QDialog):
-    """Modal dialog the USB scanner sends the MO barcode into.
+    """Modal dialog the USB scanner sends one or more barcodes into.
 
     There is no editable text field: the dialog captures the scanner's
-    keystrokes directly and submits on the terminating Enter, so the operator
-    cannot type an order in by hand.
+    keystrokes directly, so the operator cannot type an order in by hand.  When
+    given several steps (e.g. MO then battery label) it walks through them and
+    returns all captured values.
     """
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, steps, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Scan Manufacturing Order")
-        self.setModal(True)
-        self.setMinimumWidth(560)
-        self.setStyleSheet(STYLESHEET)
+        self.steps = steps                 # list of (key, title, hint)
+        self.index = 0
+        self.values: dict[str, str] = {}
         self._buffer = ""
+        self.setWindowTitle("Scan")
+        self.setModal(True)
+        self.setMinimumWidth(580)
+        self.setStyleSheet(STYLESHEET)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(34, 30, 34, 30)
-        lay.setSpacing(16)
+        lay.setContentsMargins(34, 28, 34, 28)
+        lay.setSpacing(14)
 
-        title = QLabel("SCAN MANUFACTURING ORDER")
-        title.setObjectName("DialogTitle")
-        title.setAlignment(Qt.AlignCenter)
-        lay.addWidget(title)
+        self.step_lbl = QLabel("")
+        self.step_lbl.setStyleSheet(f"color: {ACCENT}; font-weight: 700;")
+        self.step_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.step_lbl)
 
-        hint = QLabel("Scan the MO barcode now. The last 4 digits are matched to every encapsulator.")
-        hint.setStyleSheet(f"color: {MUTED};")
-        hint.setAlignment(Qt.AlignCenter)
-        lay.addWidget(hint)
+        self.title = QLabel("")
+        self.title.setObjectName("DialogTitle")
+        self.title.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.title)
+
+        self.hint = QLabel("")
+        self.hint.setStyleSheet(f"color: {MUTED};")
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        lay.addWidget(self.hint)
 
         # Read-only display of what the scanner has sent — not an input box.
         self.display = QLabel("waiting for scan…")
@@ -297,30 +325,47 @@ class ScanDialog(QDialog):
         cancel = QPushButton("Cancel")
         cancel.setFocusPolicy(Qt.NoFocus)   # keep keystrokes flowing to the dialog
         cancel.clicked.connect(self.reject)
-        ok = QPushButton("OK")
-        ok.setObjectName("Primary")
-        ok.setFocusPolicy(Qt.NoFocus)
-        ok.clicked.connect(self._submit)
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.setObjectName("Primary")
+        self.ok_btn.setFocusPolicy(Qt.NoFocus)
+        self.ok_btn.clicked.connect(self._advance)
         row.addWidget(cancel)
-        row.addWidget(ok)
+        row.addWidget(self.ok_btn)
         lay.addLayout(row)
 
-        # The dialog itself captures the scanner's keystrokes.
         self.setFocusPolicy(Qt.StrongFocus)
+        self._show_step()
+
+    def _show_step(self) -> None:
+        key, title, hint = self.steps[self.index]
+        self.title.setText(title)
+        self.hint.setText(hint)
+        self.step_lbl.setText(
+            f"Step {self.index + 1} of {len(self.steps)}" if len(self.steps) > 1 else ""
+        )
+        self.ok_btn.setText("OK" if self.index == len(self.steps) - 1 else "Next ›")
+        self._buffer = ""
+        self.display.setText("waiting for scan…")
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self.setFocus()
 
-    def _submit(self) -> None:
-        if self._buffer.strip():
+    def _advance(self) -> None:
+        if not self._buffer.strip():
+            return
+        key = self.steps[self.index][0]
+        self.values[key] = self._buffer.strip()
+        if self.index < len(self.steps) - 1:
+            self.index += 1
+            self._show_step()
+        else:
             self.accept()
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if key in (Qt.Key_Return, Qt.Key_Enter):
-            if self._buffer.strip():
-                self.accept()
+            self._advance()
             return
         if key == Qt.Key_Escape:
             self.reject()
@@ -333,8 +378,8 @@ class ScanDialog(QDialog):
                 self._buffer += text
         self.display.setText(self._buffer or "waiting for scan…")
 
-    def value(self) -> str:
-        return self._buffer.strip()
+    def result_values(self) -> dict[str, str]:
+        return dict(self.values)
 
 
 class MainWindow(QWidget):
@@ -449,9 +494,26 @@ class MainWindow(QWidget):
         return page
 
     def _verify_mo(self) -> None:
-        dialog = ScanDialog(self)
-        if dialog.exec() == QDialog.Accepted and dialog.value() and self.worker:
-            self.worker.submit(CMD_VERIFY, dialog.value())
+        steps = [(
+            "mo",
+            "SCAN MANUFACTURING ORDER",
+            "Scan the MO barcode. The last 4 digits are matched to every encapsulator.",
+        )]
+        if self.config.secondary.enabled:
+            label = self.config.secondary.label_name.upper()
+            steps.append((
+                "battery",
+                f"SCAN {label}",
+                f"Scan the battery label. Its first {self.config.secondary.battery_first_digits} digits must match the MO.",
+            ))
+        dialog = ScanDialog(steps, self)
+        if dialog.exec() != QDialog.Accepted or not self.worker:
+            return
+        vals = dialog.result_values()
+        if self.config.secondary.enabled:
+            self.worker.submit(CMD_VERIFY, {"mo": vals.get("mo", ""), "battery": vals.get("battery", "")})
+        else:
+            self.worker.submit(CMD_VERIFY, vals.get("mo", ""))
 
     def _manual_lockout(self) -> None:
         if self.worker:
@@ -514,6 +576,7 @@ class MainWindow(QWidget):
         tabs.addTab(self._build_plcs_tab(), "PLCs")
         tabs.addTab(self._build_scanner_tab(), "Scanner")
         tabs.addTab(self._build_compare_tab(), "Compare")
+        tabs.addTab(self._build_secondary_tab(), "Battery Scan")
         tabs.addTab(self._build_shift_tab(), "Shift")
         tabs.addTab(self._build_security_tab(), "Security")
         lay.addWidget(tabs, 1)
@@ -607,7 +670,37 @@ class MainWindow(QWidget):
         grid.addWidget(QLabel("0 = use the whole number. Default 4."), 0, 2)
         self.cfg_widgets["digits_only"] = QCheckBox("Strip non-digit characters before matching")
         grid.addWidget(self.cfg_widgets["digits_only"], 1, 0, 1, 3)
-        grid.setRowStretch(2, 1)
+        grid.addWidget(QLabel("Required MO scan length"), 2, 0)
+        self.cfg_widgets["mo_length"] = QSpinBox()
+        self.cfg_widgets["mo_length"].setRange(0, 64)
+        grid.addWidget(self.cfg_widgets["mo_length"], 2, 1)
+        grid.addWidget(QLabel("exact character count of the MO scan (0 = no check). Default 9."), 2, 2)
+        grid.setRowStretch(3, 1)
+        return w
+
+    def _build_secondary_tab(self) -> QWidget:
+        w = QWidget()
+        grid = QGridLayout(w)
+        grid.setColumnStretch(1, 1)
+        self.cfg_widgets["secondary_enabled"] = QCheckBox(
+            "Require a second scan of the battery label and cross-check it against the MO"
+        )
+        grid.addWidget(self.cfg_widgets["secondary_enabled"], 0, 0, 1, 3)
+        grid.addWidget(QLabel("Battery label name"), 1, 0)
+        self.cfg_widgets["secondary_label"] = QLineEdit()
+        grid.addWidget(self.cfg_widgets["secondary_label"], 1, 1)
+        grid.addWidget(QLabel("shown on the scan prompt"), 1, 2)
+        grid.addWidget(QLabel("Battery first N digits"), 2, 0)
+        self.cfg_widgets["battery_first_digits"] = QSpinBox()
+        self.cfg_widgets["battery_first_digits"].setRange(1, 18)
+        grid.addWidget(self.cfg_widgets["battery_first_digits"], 2, 1)
+        grid.addWidget(QLabel("leading digits compared to the MO number. Default 4."), 2, 2)
+        grid.addWidget(QLabel("Battery min scan length"), 3, 0)
+        self.cfg_widgets["battery_min_length"] = QSpinBox()
+        self.cfg_widgets["battery_min_length"].setRange(0, 64)
+        grid.addWidget(self.cfg_widgets["battery_min_length"], 3, 1)
+        grid.addWidget(QLabel("min characters (0 = no check). Default 10 — keeps it distinct from the MO."), 3, 2)
+        grid.setRowStretch(4, 1)
         return w
 
     def _build_shift_tab(self) -> QWidget:
@@ -672,6 +765,11 @@ class MainWindow(QWidget):
         self.cfg_widgets["scan_pattern"].setText(c.scanner.scan_pattern or "")
         self.cfg_widgets["mo_last_digits"].setValue(c.compare.mo_last_digits)
         self.cfg_widgets["digits_only"].setChecked(c.compare.digits_only)
+        self.cfg_widgets["mo_length"].setValue(c.compare.mo_length)
+        self.cfg_widgets["secondary_enabled"].setChecked(c.secondary.enabled)
+        self.cfg_widgets["secondary_label"].setText(c.secondary.label_name)
+        self.cfg_widgets["battery_first_digits"].setValue(c.secondary.battery_first_digits)
+        self.cfg_widgets["battery_min_length"].setValue(c.secondary.battery_min_length)
         self.cfg_widgets["start_times"].setText(", ".join(c.shift.start_times))
         self.cfg_widgets["poll_interval"].setValue(c.shift.poll_interval)
         self.cfg_widgets["lock_on_startup"].setChecked(c.shift.lock_on_startup)
@@ -715,6 +813,13 @@ class MainWindow(QWidget):
             "compare": {
                 "mo_last_digits": self.cfg_widgets["mo_last_digits"].value(),
                 "digits_only": self.cfg_widgets["digits_only"].isChecked(),
+                "mo_length": self.cfg_widgets["mo_length"].value(),
+            },
+            "secondary": {
+                "enabled": self.cfg_widgets["secondary_enabled"].isChecked(),
+                "label_name": self.cfg_widgets["secondary_label"].text() or "Battery Label",
+                "battery_first_digits": self.cfg_widgets["battery_first_digits"].value(),
+                "battery_min_length": self.cfg_widgets["battery_min_length"].value(),
             },
             "shift": {
                 "start_times": times,
@@ -775,7 +880,7 @@ class MainWindow(QWidget):
             master = event.get("master", {})
             self._master_bypassed = bool(master.get("mo_bypassed"))
             if self.master_panel:
-                self.master_panel.update_from(master)
+                self.master_panel.update_from(master, event.get("secondary"))
             online = sum(1 for m in encs if m.get("connected")) + (1 if master.get("connected") else 0)
             total = len(encs) + 1
             color = LOG_COLOR["ok"] if online == total else LOG_COLOR["alarm"]

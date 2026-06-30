@@ -21,7 +21,7 @@ import time
 from .config import Config
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier, State
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import extract_mo_number
+from .scanner import extract_battery_number, extract_mo_number
 from .shift import ShiftDetector
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ class PLCWorker(threading.Thread):
         self.master: MasterMonitor | None = None
         self._running = False
         self._last_beat = 0.0
+        self.battery_scanned: int | None = None
+        self.battery_matched: bool | None = None
 
     # -- public API -----------------------------------------------------
     def submit(self, command: str, value: str | None = None) -> None:
@@ -115,7 +117,7 @@ class PLCWorker(threading.Thread):
         self._connect_master()
         if self.config.shift.lock_on_startup:
             self.notifier.shift_change(self.detector.current_shift_label())
-            self._lockout(silent=True)
+            self._lockout(cycle_stop=False)   # nothing is running yet at startup
         self._emit_status()
 
     def _connect_enc(self, enc: EncapsulatorMonitor) -> None:
@@ -148,8 +150,8 @@ class PLCWorker(threading.Thread):
             self._emit_status()
             return
         if command == CMD_LOCKOUT:
-            self.notifier._log("warn", "Manual lockout — MO_Verified and MO_Bypassed cleared.")
-            self._lockout()
+            self.notifier._log("warn", "Manual lockout — MO_Verified/MO_Bypassed cleared, cycle stop requested.")
+            self._lockout(cycle_stop=True)
             self._emit_status()
             return
         if command == CMD_BYPASS:
@@ -157,18 +159,32 @@ class PLCWorker(threading.Thread):
             self._emit_status()
             return
         if command == CMD_VERIFY:
-            self._verify(value or "")
+            self._verify(value)
 
-    def _lockout(self, silent: bool = False) -> None:
+    def _lockout(self, cycle_stop: bool = False) -> None:
+        self.battery_scanned = None
+        self.battery_matched = None
         for enc in self.encapsulators:
             if enc.connected:
                 enc.lock()
         if self.master and self.master.connected:
             try:
                 self.master.set_verified(False)
-                self.master.set_bypassed(False)   # bypass resets at shift/lockout
+                self.master.set_bypassed(False)        # bypass resets at shift/lockout
+                if cycle_stop:
+                    self.master.set_cycle_stop(True)   # graceful stop so the cycle finishes
             except PLCError as exc:
                 self._fail_master(exc)
+
+    def _fail_verification(self) -> None:
+        """A scan was rejected: ensure the master stays blocked, then update the UI."""
+
+        if self.master and self.master.connected and self.master.mo_verified:
+            try:
+                self.master.set_verified(False)
+            except PLCError as exc:
+                self._fail_master(exc)
+        self._emit_status()
 
     def _bypass(self, on: bool) -> None:
         if not (self.master and self.master.connected):
@@ -176,6 +192,8 @@ class PLCWorker(threading.Thread):
             return
         try:
             self.master.set_bypassed(on)
+            if on:
+                self.master.set_cycle_stop(False)      # bypass means the line may run
         except PLCError as exc:
             self._fail_master(exc)
             return
@@ -184,11 +202,27 @@ class PLCWorker(threading.Thread):
         else:
             self.notifier._log("info", "MO bypass cleared.")
 
-    def _verify(self, raw: str) -> None:
-        number = extract_mo_number(raw, self.config.scanner, self.config.compare)
+    def _verify(self, payload) -> None:
+        # payload is either the raw MO string, or a dict {"mo": ..., "battery": ...}.
+        if isinstance(payload, dict):
+            raw_mo = payload.get("mo", "")
+            raw_battery = payload.get("battery")
+        else:
+            raw_mo = payload or ""
+            raw_battery = None
+
+        # Length checks guard against scanning the wrong/same barcode twice.
+        mo_text = (raw_mo or "").strip("\r\n").strip()
+        mo_len = self.config.compare.mo_length
+        if mo_len and len(mo_text) != mo_len:
+            self.notifier._log("alarm", f"MO scan must be {mo_len} characters (got {len(mo_text)}) — blocked.")
+            self._fail_verification()
+            return
+
+        number = extract_mo_number(raw_mo, self.config.scanner, self.config.compare)
         if number is None:
-            self.notifier._log("alarm", f"Invalid scan {raw!r}: no number could be read.")
-            self._emit_status()
+            self.notifier._log("alarm", f"Invalid scan {raw_mo!r}: no number could be read.")
+            self._fail_verification()
             return
         self.notifier._log("info", f"Scanned MO → comparing {number} to each encapsulator recipe.")
 
@@ -211,12 +245,41 @@ class PLCWorker(threading.Thread):
         if not all_present:
             self.notifier._log("alarm", "Not all encapsulators are connected — cannot verify.")
 
+        # Optional secondary battery-label check.
+        battery_ok = True
+        if self.config.secondary.enabled:
+            battery_text = (raw_battery or "").strip("\r\n").strip()
+            min_len = self.config.secondary.battery_min_length
+            if min_len and len(battery_text) < min_len:
+                self.notifier._log(
+                    "alarm",
+                    f"Battery label scan must be at least {min_len} characters (got {len(battery_text)}) — blocked.",
+                )
+                self.battery_scanned = None
+                self.battery_matched = False
+                self._fail_verification()
+                return
+            self.battery_scanned = extract_battery_number(
+                raw_battery or "", self.config.scanner, self.config.secondary.battery_first_digits
+            )
+            battery_ok = self.battery_scanned is not None and self.battery_scanned == number
+            if self.battery_scanned is None:
+                self.notifier._log("alarm", "Battery label scan unreadable — verification blocked.")
+            elif battery_ok:
+                self.notifier._log("ok", f"Battery label {self.battery_scanned} matches MO {number}.")
+            else:
+                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ MO {number}.")
+            self.battery_matched = battery_ok
+
+        verified = all_matched and battery_ok
         if self.master and self.master.connected:
             try:
-                self.master.set_verified(all_matched)
+                self.master.set_verified(verified)
+                if verified:
+                    self.master.set_cycle_stop(False)   # release the graceful stop
             except PLCError as exc:
                 self._fail_master(exc)
-        if all_matched:
+        if verified:
             self.notifier._log("ok", f"MO {number} VERIFIED — {self.master.name} may run.")
         else:
             self.notifier._log("alarm", f"MO {number} NOT verified — {self.master.name} blocked.")
@@ -243,7 +306,7 @@ class PLCWorker(threading.Thread):
         running = self.master is not None and (self.master.mo_verified or self.master.mo_bypassed)
         if self.detector.check() and running:
             self.notifier.shift_change(self.detector.current_shift_label())
-            self._lockout()
+            self._lockout(cycle_stop=True)   # graceful stop so the cycle finishes
             self._emit_status()
             return
 
@@ -288,6 +351,7 @@ class PLCWorker(threading.Thread):
             "state": self.master.state.value if self.master else "DISCONNECTED",
             "mo_verified": self.master.mo_verified if self.master else False,
             "mo_bypassed": self.master.mo_bypassed if self.master else False,
+            "cycle_stop": self.master.cycle_stop if self.master else False,
             "heartbeat": self.master.heartbeat if self.master else 0,
             "connected": self.master.connected if self.master else False,
         }
@@ -296,6 +360,11 @@ class PLCWorker(threading.Thread):
                 "type": "status",
                 "encapsulators": encapsulators,
                 "master": master,
+                "secondary": {
+                    "enabled": self.config.secondary.enabled,
+                    "scanned": self.battery_scanned,
+                    "matched": self.battery_matched,
+                },
                 "shift": self.detector.current_shift_label(),
             }
         )

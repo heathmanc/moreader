@@ -38,9 +38,14 @@ def test_connect_locks_master_on_startup():
     assert all(e.state is State.LOCKED for e in worker.encapsulators)
 
 
+# 9-character MO scans (the default required length) ending in the model number.
+MO_1001 = "000001001"
+MO_1002 = "000001002"
+
+
 def test_all_match_verifies_master():
     worker = make_worker(recipes=(1001, 1001, 1001))
-    worker._handle(CMD_VERIFY, "MO-99-771001")
+    worker._handle(CMD_VERIFY, MO_1001)
     assert all(e.state is State.MATCH for e in worker.encapsulators)
     assert worker.master.mo_verified is True
     assert worker.master.link.mo_verified is True
@@ -48,20 +53,40 @@ def test_all_match_verifies_master():
 
 def test_one_mismatch_blocks_master():
     worker = make_worker(recipes=(1001, 1001, 2002))
-    worker._handle(CMD_VERIFY, "AB1001")
+    worker._handle(CMD_VERIFY, MO_1001)
     states = [e.state for e in worker.encapsulators]
     assert states == [State.MATCH, State.MATCH, State.MISMATCH]
     assert worker.master.mo_verified is False
     assert worker.master.link.mo_verified is False
 
 
-def test_manual_lockout_clears_master():
+def test_manual_lockout_clears_master_and_requests_cycle_stop():
     worker = make_worker()
-    worker._handle(CMD_VERIFY, "AB1001")        # verified
+    worker._handle(CMD_VERIFY, MO_1001)        # verified
     assert worker.master.mo_verified is True
+    assert worker.master.cycle_stop is False
     worker._handle(CMD_LOCKOUT, None)
     assert worker.master.mo_verified is False
+    assert worker.master.cycle_stop is True    # graceful cycle stop requested
+    assert worker.master.link.cycle_stop is True
     assert all(e.state is State.LOCKED for e in worker.encapsulators)
+
+
+def test_verify_clears_cycle_stop():
+    worker = make_worker()
+    worker._handle(CMD_LOCKOUT, None)
+    assert worker.master.cycle_stop is True
+    worker._handle(CMD_VERIFY, MO_1001)
+    assert worker.master.mo_verified is True
+    assert worker.master.cycle_stop is False
+
+
+def test_mo_length_check_blocks_short_scan():
+    worker = make_worker()
+    worker._handle(CMD_VERIFY, "1001")          # too short (default length is 9)
+    assert worker.master.mo_verified is False
+    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
+    assert any("9 characters" in t for t in texts)
 
 
 def test_bypass_sets_master_bit():
@@ -80,6 +105,31 @@ def test_bypass_cleared_by_lockout():
     assert worker.master.link.mo_bypassed is False
 
 
+def test_secondary_battery_scan_must_match_and_be_long_enough():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker.config.secondary.enabled = True
+    # Battery label: first 4 digits 1001 (matches MO) and >= 10 chars long.
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "1001ABCDEFGH"})
+    assert worker.master.mo_verified is True
+    assert worker.battery_matched is True
+
+
+def test_secondary_battery_mismatch_blocks():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker.config.secondary.enabled = True
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "2002ABCDEFGH"})
+    assert worker.master.mo_verified is False
+
+
+def test_secondary_battery_too_short_blocks():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker.config.secondary.enabled = True
+    worker._handle(CMD_VERIFY, {"mo": MO_1001, "battery": "1001"})   # < 10 chars
+    assert worker.master.mo_verified is False
+    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
+    assert any("at least 10 characters" in t for t in texts)
+
+
 def test_bypass_cleared_by_shift_change():
     cfg = Config()
     worker = PLCWorker(cfg, simulate=True, events=queue.Queue())
@@ -94,7 +144,7 @@ def test_bypass_cleared_by_shift_change():
 
 def test_invalid_scan_logs_alarm_and_no_verify():
     worker = make_worker()
-    worker._handle(CMD_VERIFY, "NODIGITS")
+    worker._handle(CMD_VERIFY, "NODIGITSX")     # 9 chars (passes length) but no number
     assert worker.master.mo_verified is False
     texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
     assert any("Invalid scan" in t for t in texts)
@@ -110,7 +160,7 @@ def test_heartbeat_written_during_housekeeping():
 
 def test_status_event_shape():
     worker = make_worker(recipes=(1001, 1001, 1001))
-    worker._handle(CMD_VERIFY, "X1001")
+    worker._handle(CMD_VERIFY, MO_1001)
     statuses = [e for e in drain(worker) if e["type"] == "status"]
     assert statuses
     last = statuses[-1]
@@ -118,3 +168,5 @@ def test_status_event_shape():
     assert last["encapsulators"][0]["recipe"] == 1001
     assert last["master"]["mo_verified"] is True
     assert last["master"]["name"] == "COS"
+    assert "cycle_stop" in last["master"]
+    assert "secondary" in last
