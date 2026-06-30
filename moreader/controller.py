@@ -155,6 +155,10 @@ class MasterMonitor:
         self.mo_verified = verified
         self._recompute()
 
+    def read_verified(self) -> bool:
+        """Read the live MO_Verified bit (the PLC may have cleared it)."""
+        return self.link.read_mo_verified()
+
     def set_bypassed(self, bypassed: bool) -> None:
         self.link.set_mo_bypassed(bypassed)
         self.mo_bypassed = bypassed

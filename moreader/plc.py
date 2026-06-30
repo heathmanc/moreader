@@ -147,6 +147,10 @@ class MasterLink(ABC):
         """Allow (True) or block (False) the master from running the product."""
 
     @abstractmethod
+    def read_mo_verified(self) -> bool:
+        """Read MO_Verified back (the PLC may clear it on a changeover)."""
+
+    @abstractmethod
     def set_mo_bypassed(self, bypassed: bool) -> None:
         """Set the operator-bypass BOOL so the master may run without a verified scan."""
 
@@ -176,6 +180,9 @@ class PylogixMaster(MasterLink, _PylogixConn):
 
     def set_mo_verified(self, verified: bool) -> None:
         self._write(self.cfg.mo_verified_tag.name, bool(verified))
+
+    def read_mo_verified(self) -> bool:
+        return bool(self._read(self.cfg.mo_verified_tag.name))
 
     def set_mo_bypassed(self, bypassed: bool) -> None:
         if self.cfg.mo_bypassed_tag.name:
@@ -208,6 +215,9 @@ class SimulatedMaster(MasterLink):
 
     def set_mo_verified(self, verified: bool) -> None:
         self.mo_verified = bool(verified)
+
+    def read_mo_verified(self) -> bool:
+        return self.mo_verified
 
     def set_mo_bypassed(self, bypassed: bool) -> None:
         self.mo_bypassed = bool(bypassed)

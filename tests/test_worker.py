@@ -60,6 +60,19 @@ def test_one_mismatch_blocks_master():
     assert worker.master.link.mo_verified is False
 
 
+def test_plc_changeover_clears_verification_and_requires_rescan():
+    worker = make_worker()
+    worker._handle(CMD_VERIFY, MO_1001)
+    assert worker.master.mo_verified is True
+    # Simulate the assembly-line PLC clearing MO_Verified on a changeover.
+    worker.master.link.mo_verified = False
+    worker._housekeeping()
+    assert worker.master.mo_verified is False
+    assert all(e.state is State.LOCKED for e in worker.encapsulators)
+    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
+    assert any("Changeover" in t for t in texts)
+
+
 def test_manual_lockout_clears_master_and_requests_cycle_stop():
     worker = make_worker()
     worker._handle(CMD_VERIFY, MO_1001)        # verified

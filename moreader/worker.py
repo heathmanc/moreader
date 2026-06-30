@@ -323,6 +323,17 @@ class PLCWorker(threading.Thread):
             except PLCError as exc:
                 self._fail_master(exc)
 
+        # Changeover: the PLC cleared MO_Verified on its own -> require a re-scan.
+        if self.master and self.master.connected and self.master.mo_verified:
+            try:
+                if not self.master.read_verified():
+                    self.notifier._log("warn", "Changeover detected (PLC cleared MO_Verified) — scan required.")
+                    self._lockout(cycle_stop=False)   # the PLC is driving the changeover
+                    self._emit_status()
+                    return
+            except PLCError as exc:
+                self._fail_master(exc)
+
         # Time-based shift change clears verification and bypass.
         running = self.master is not None and (self.master.mo_verified or self.master.mo_bypassed)
         if self.detector.check() and running:
