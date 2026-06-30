@@ -95,3 +95,16 @@ def test_save_and_load_roundtrip(tmp_path):
 def test_invalid_driver_rejected():
     with pytest.raises(ConfigError):
         from_dict({"plc": {"driver": "modbus"}})
+
+
+def test_stale_config_keys_are_ignored():
+    # A config written by an older moreader version must not crash the loader.
+    stale = {
+        "scanner": {"type": "keyboard", "port": "/dev/ttyACM0", "baudrate": 9600},
+        "compare": {"strip": True, "ignore_case": True, "collapse_internal_space": False},
+        "plc": {"driver": "logix", "ip_address": "192.168.1.10", "tags": {"expected_model": "X"}},
+    }
+    cfg = from_dict(stale)
+    assert cfg.scanner.type == "keyboard"
+    assert cfg.compare.mo_last_digits == 4   # falls back to the new default
+    assert len(cfg.plc.machines) == 3

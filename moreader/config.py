@@ -11,7 +11,7 @@ through the GUI's password-protected Configuration screen.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +170,17 @@ def _section(data: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
+def _build(cls, data: dict[str, Any]):
+    """Construct a dataclass from a dict, ignoring keys it doesn't define.
+
+    This keeps moreader forgiving of stale/extra keys in a config file written by
+    an older version, instead of crashing on an unexpected keyword argument.
+    """
+
+    known = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in known})
+
+
 def _tag(data: dict[str, Any], key: str, default: TagSpec) -> TagSpec:
     raw = data.get(key)
     if raw is None:
@@ -218,11 +229,11 @@ def from_dict(data: dict[str, Any]) -> Config:
     if not isinstance(data, dict):
         raise ConfigError("Top-level configuration must be a mapping")
     return Config(
-        security=SecurityConfig(**_section(data, "security")),
+        security=_build(SecurityConfig, _section(data, "security")),
         plc=_plc_from_dict(_section(data, "plc")),
-        scanner=ScannerConfig(**_section(data, "scanner")),
-        compare=CompareConfig(**_section(data, "compare")),
-        shift=ShiftConfig(**_section(data, "shift")),
+        scanner=_build(ScannerConfig, _section(data, "scanner")),
+        compare=_build(CompareConfig, _section(data, "compare")),
+        shift=_build(ShiftConfig, _section(data, "shift")),
     )
 
 
