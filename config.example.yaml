@@ -1,0 +1,57 @@
+# moreader configuration -- copy to config.yaml and edit for your line.
+
+plc:
+  # driver: "logix" (CompactLogix/ControlLogix/Micro800),
+  #         "slc"   (MicroLogix/SLC 500),
+  #         "simulated" (no hardware -- for testing)
+  driver: logix
+  ip_address: 192.168.1.10
+  slot: 0                       # ControlLogix CPU slot; 0 for CompactLogix/Micro800
+
+  # --- Logix: use named tags. ---
+  # The tag that holds the model/part number the PLC is currently set to run.
+  expected_model_tag: Program:MainProgram.ModelNumber
+  # BOOL the program sets True when the scan matches -> your ladder gates the
+  # machine on this bit (the PLC will not run the product until it is True).
+  run_permit_tag: Program:MainProgram.ScanRunPermit
+  # BOOL the program sets True on a mismatch (drive an HMI alarm / light stack).
+  alarm_tag: Program:MainProgram.ScanMismatchAlarm
+  # Optional BOOL the PLC/HMI raises to request a shift-change lockout.
+  shift_request_tag: Program:MainProgram.ShiftChangeRequest
+  # Optional STRING the program writes the last scanned value to (HMI echo).
+  last_scan_tag: Program:MainProgram.LastScan
+
+  # --- SLC/MicroLogix example (driver: slc) would instead use file addresses ---
+  # expected_model_tag: ST10:0
+  # run_permit_tag: B3:0/0
+  # alarm_tag: B3:0/1
+  # shift_request_tag: B3:0/2
+  # last_scan_tag: ST10:1
+
+scanner:
+  # type: "keyboard" (HID keyboard-wedge, the USB scanner default),
+  #       "serial"   (USB virtual COM port, needs pyserial),
+  #       "stdin"    (read piped input -- handy for testing)
+  type: keyboard
+  port: /dev/ttyACM0           # serial only
+  baudrate: 9600               # serial only
+  # Optional regex to pull the model out of a richer MO barcode.  Use a named
+  # group called "model".  Example for "MO12345|MODEL=ABC-100|QTY=500":
+  # scan_pattern: 'MODEL=(?P<model>[^|]+)'
+  scan_pattern: null
+
+compare:
+  strip: true                  # trim surrounding whitespace
+  ignore_case: true            # case-insensitive match
+  collapse_internal_space: false
+
+shift:
+  # Clock times (HH:MM, local) at which a new shift begins.  Empty list disables
+  # time-based detection.
+  start_times:
+    - "06:00"
+    - "14:00"
+    - "22:00"
+  watch_plc_request: true      # also lock out on the PLC shift_request_tag edge
+  lock_on_startup: true        # require a scan before the first run after start
+  poll_interval: 2.0           # seconds between shift-change checks while running

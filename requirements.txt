@@ -1,0 +1,8 @@
+# Core
+pyyaml>=6.0          # config file loading
+
+# PLC communication (EtherNet/IP for Allen Bradley Logix & SLC/MicroLogix)
+pycomm3>=1.2.14
+
+# Optional: only needed when scanner.type == "serial"
+pyserial>=3.5
