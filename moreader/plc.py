@@ -1,13 +1,12 @@
 """PLC communication layer (Allen Bradley Logix via pylogix).
 
-A thin abstraction over `pylogix <https://github.com/dmroeder/pylogix>`_ so the
-rest of the program never imports the driver directly.  This keeps the controller
-testable: :class:`SimulatedPLC` implements the same interface with no hardware or
-third-party dependency.
+Each machine is one PLC.  A :class:`MachineLink` wraps a single PLC connection
+and exposes just what the controller needs: read the model DINT, set the
+run-permit / alarm BOOLs, optionally echo the scanned number, and read a
+shift-change request bit.
 
-The expected model number lives in a PLC tag.  The program reads it, compares it
-to the scanned barcode, and writes the result back to the run-permit / alarm BOOL
-tags so the PLC logic can gate the machine.
+:class:`SimulatedMachine` implements the same interface with no hardware, so the
+controller, worker, and GUI can be exercised end-to-end without a PLC.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
-from .config import PLCConfig
+from .config import MachineConfig
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +23,15 @@ class PLCError(Exception):
     """Raised when a PLC read/write fails."""
 
 
-class PLCInterface(ABC):
-    """Common interface for every PLC backend."""
+class MachineLink(ABC):
+    """Connection to a single machine/PLC."""
+
+    def __init__(self, cfg: MachineConfig) -> None:
+        self.cfg = cfg
+
+    @property
+    def name(self) -> str:
+        return self.cfg.name
 
     @abstractmethod
     def connect(self) -> None: ...
@@ -34,38 +40,27 @@ class PLCInterface(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
-    def read_expected_model(self) -> str:
-        """Return the model/part number the PLC is currently set to run."""
+    def read_model(self) -> int:
+        """Return the model-number DINT the PLC is currently set to run."""
 
     @abstractmethod
-    def read_shift_request(self) -> bool:
-        """Return True while the PLC/HMI is requesting a shift-change lockout."""
+    def read_shift_request(self) -> bool: ...
 
     @abstractmethod
-    def set_run_permit(self, allowed: bool) -> None:
-        """Allow (True) or block (False) the PLC from running the product."""
+    def set_run_permit(self, allowed: bool) -> None: ...
 
     @abstractmethod
-    def set_alarm(self, active: bool) -> None:
-        """Drive the scan-mismatch alarm bit."""
+    def set_alarm(self, active: bool) -> None: ...
 
     @abstractmethod
-    def write_last_scan(self, value: str) -> None:
-        """Echo the last scanned value back to the PLC for HMI display."""
-
-    def __enter__(self) -> "PLCInterface":
-        self.connect()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
+    def write_last_scan(self, value: int) -> None: ...
 
 
-class PylogixPLC(PLCInterface):
-    """CompactLogix / ControlLogix via pylogix."""
+class PylogixMachine(MachineLink):
+    """A CompactLogix / ControlLogix PLC via pylogix."""
 
-    def __init__(self, cfg: PLCConfig) -> None:
-        self.cfg = cfg
+    def __init__(self, cfg: MachineConfig) -> None:
+        super().__init__(cfg)
         self._comm = None
 
     def connect(self) -> None:
@@ -76,9 +71,9 @@ class PylogixPLC(PLCInterface):
         self._comm = PylogixDriver()
         self._comm.IPAddress = self.cfg.ip_address
         self._comm.ProcessorSlot = self.cfg.slot
-        # pylogix connects lazily on first request; verify by reading the model.
-        self._read(self.cfg.expected_model.name)
-        log.info("Connected to PLC at %s slot %s", self.cfg.ip_address, self.cfg.slot)
+        # pylogix connects lazily; verify by reading the model DINT.
+        self._read(self.cfg.model_tag.name)
+        log.info("Connected to %s at %s slot %s", self.cfg.name, self.cfg.ip_address, self.cfg.slot)
 
     def close(self) -> None:
         if self._comm is not None:
@@ -89,75 +84,75 @@ class PylogixPLC(PLCInterface):
 
     def _require(self):
         if self._comm is None:
-            raise PLCError("PLC is not connected; call connect() first")
+            raise PLCError(f"{self.cfg.name}: not connected")
         return self._comm
 
     def _read(self, tag: str):
         response = self._require().Read(tag)
         if response.Status != "Success":
-            raise PLCError(f"Failed reading tag {tag!r}: {response.Status}")
+            raise PLCError(f"{self.cfg.name}: failed reading {tag!r}: {response.Status}")
         return response.Value
 
     def _write(self, tag: str, value) -> None:
         response = self._require().Write(tag, value)
         if response.Status != "Success":
-            raise PLCError(f"Failed writing tag {tag!r}: {response.Status}")
+            raise PLCError(f"{self.cfg.name}: failed writing {tag!r}: {response.Status}")
 
-    def read_expected_model(self) -> str:
-        value = self._read(self.cfg.expected_model.name)
-        return "" if value is None else str(value)
+    def read_model(self) -> int:
+        value = self._read(self.cfg.model_tag.name)
+        return int(value) if value is not None else 0
 
     def read_shift_request(self) -> bool:
-        tag = self.cfg.shift_request.name
+        tag = self.cfg.shift_request_tag.name
         if not tag:
             return False
         return bool(self._read(tag))
 
     def set_run_permit(self, allowed: bool) -> None:
-        self._write(self.cfg.run_permit.name, bool(allowed))
+        self._write(self.cfg.run_permit_tag.name, bool(allowed))
 
     def set_alarm(self, active: bool) -> None:
-        if self.cfg.alarm.name:
-            self._write(self.cfg.alarm.name, bool(active))
+        if self.cfg.alarm_tag.name:
+            self._write(self.cfg.alarm_tag.name, bool(active))
 
-    def write_last_scan(self, value: str) -> None:
-        tag = self.cfg.last_scan.name
+    def write_last_scan(self, value: int) -> None:
+        tag = self.cfg.last_scan_tag.name
         if tag:
             try:
-                self._write(tag, value)
-            except PLCError as exc:  # non-critical: just an HMI echo
-                log.warning("Could not write last-scan tag: %s", exc)
+                self._write(tag, int(value))
+            except PLCError as exc:  # non-critical echo
+                log.warning("Could not write last-scan tag on %s: %s", self.cfg.name, exc)
 
 
-class SimulatedPLC(PLCInterface):
-    """In-memory PLC for dry runs, demos, and tests (no hardware needed)."""
+class SimulatedMachine(MachineLink):
+    """In-memory machine for dry runs, demos, and tests."""
 
-    def __init__(self, cfg: PLCConfig | None = None, expected_model: str = "ABC-100") -> None:
-        self.cfg = cfg
-        self._expected = expected_model
+    def __init__(self, cfg: MachineConfig | None = None, model: int = 1001) -> None:
+        super().__init__(cfg or MachineConfig())
+        self._model = model
         self._shift_request = False
         self.run_permit = False
         self.alarm = False
-        self.last_scan = ""
+        self.last_scan: int | None = None
         self.connected = False
 
     def connect(self) -> None:
         self.connected = True
-        log.info("Connected to SIMULATED PLC (expected model=%s)", self._expected)
+        log.info("Connected to SIMULATED %s (model=%s)", self.cfg.name, self._model)
 
     def close(self) -> None:
         self.connected = False
 
     # Test/demo helpers -------------------------------------------------
-    def set_expected_model(self, model: str) -> None:
-        self._expected = model
+    def set_model(self, model: int) -> None:
+        self._model = model
 
     def request_shift_change(self, active: bool = True) -> None:
         self._shift_request = active
 
     # Interface ---------------------------------------------------------
-    def read_expected_model(self) -> str:
-        return self._expected
+    def read_model(self) -> int:
+        return self._model
 
     def read_shift_request(self) -> bool:
         return self._shift_request
@@ -168,15 +163,15 @@ class SimulatedPLC(PLCInterface):
     def set_alarm(self, active: bool) -> None:
         self.alarm = bool(active)
 
-    def write_last_scan(self, value: str) -> None:
-        self.last_scan = value
+    def write_last_scan(self, value: int) -> None:
+        self.last_scan = int(value)
 
 
-def build_plc(cfg: PLCConfig) -> PLCInterface:
-    """Factory: pick the PLC backend named in the config."""
+def build_machine(cfg: MachineConfig, driver: str, sim_model: int = 1001) -> MachineLink:
+    """Factory: build the link for one machine based on the driver."""
 
-    if cfg.driver == "logix":
-        return PylogixPLC(cfg)
-    if cfg.driver == "simulated":
-        return SimulatedPLC(cfg)
-    raise PLCError(f"Unknown PLC driver: {cfg.driver!r}")
+    if driver == "simulated":
+        return SimulatedMachine(cfg, sim_model)
+    if driver == "logix":
+        return PylogixMachine(cfg)
+    raise PLCError(f"Unknown PLC driver: {driver!r}")

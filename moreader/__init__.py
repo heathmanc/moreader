@@ -1,30 +1,30 @@
-"""moreader -- manufacturing-order scan verification against an Allen Bradley PLC.
+"""moreader -- manufacturing-order scan verification against Allen Bradley PLCs.
 
-Reads a manufacturing-order / model barcode from a USB scanner and compares it to
-the model number a PLC is currently set to run.  A new shift must scan a matching
-order before the program grants the PLC's run permit; a mismatch raises an alarm.
+Reads a manufacturing-order barcode from a USB scanner and compares the last few
+digits to the model-number DINT each of three PLCs is currently set to run.  A
+new shift must scan a matching order before a PLC's run permit is granted; a
+mismatch raises that PLC's alarm.
 """
 
 from .config import Config, load_config, save_config
-from .controller import ScanResult, ShiftChangeController, State
-from .plc import PLCInterface, SimulatedPLC, build_plc
-from .scanner import BarcodeScanner, build_scanner, extract_model
+from .controller import MachineMonitor, MachineResult, MachineState
+from .plc import MachineLink, SimulatedMachine, build_machine
+from .scanner import build_scanner, extract_mo_number
 from .worker import PLCWorker
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Config",
     "load_config",
     "save_config",
-    "ShiftChangeController",
-    "ScanResult",
-    "State",
-    "PLCInterface",
-    "SimulatedPLC",
-    "build_plc",
-    "BarcodeScanner",
+    "MachineMonitor",
+    "MachineResult",
+    "MachineState",
+    "MachineLink",
+    "SimulatedMachine",
+    "build_machine",
     "build_scanner",
-    "extract_model",
+    "extract_mo_number",
     "PLCWorker",
 ]

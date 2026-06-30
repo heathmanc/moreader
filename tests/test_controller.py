@@ -1,82 +1,86 @@
-"""Tests for the scan-verification controller using the simulated PLC."""
+"""Tests for per-machine scan verification and the MO number parser."""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from moreader.config import CompareConfig, ScannerConfig, ShiftConfig
-from moreader.controller import ShiftChangeController, State, normalize
-from moreader.plc import SimulatedPLC
-from moreader.scanner import IterableScanner
+from moreader.config import CompareConfig, MachineConfig, ScannerConfig
+from moreader.controller import MachineMonitor, MachineState
+from moreader.plc import SimulatedMachine
+from moreader.scanner import extract_mo_number
 
 
-def make_controller(scans, expected="ABC-100", **shift_kwargs):
-    plc = SimulatedPLC(expected_model=expected)
-    plc.connect()
-    scanner = IterableScanner(scans)
-    shift_cfg = ShiftConfig(start_times=[], watch_plc_request=False, **shift_kwargs)
-    controller = ShiftChangeController(
-        plc=plc,
-        scanner=scanner,
-        compare_cfg=CompareConfig(),
-        shift_cfg=shift_cfg,
-    )
-    return plc, controller
+def make_monitor(model=1001):
+    link = SimulatedMachine(MachineConfig(name="M1"), model=model)
+    monitor = MachineMonitor(link)
+    monitor.connect()
+    return link, monitor
 
 
-def test_matching_scan_sets_run_permit():
-    plc, controller = make_controller(["ABC-100"])
-    controller.run_forever(max_iterations=1)
-    assert plc.run_permit is True
-    assert plc.alarm is False
-    assert controller.state is State.RUNNING
+def test_match_enables_run():
+    link, monitor = make_monitor(model=1001)
+    result = monitor.verify(1001)
+    assert result.matched is True
+    assert monitor.state is MachineState.RUNNING
+    assert link.run_permit is True
+    assert link.alarm is False
 
 
-def test_mismatch_raises_alarm_and_blocks():
-    plc, controller = make_controller(["WRONG-999"])
-    controller.run_forever(max_iterations=1)
-    assert plc.run_permit is False
-    assert plc.alarm is True
-    assert controller.state is State.ALARM
+def test_mismatch_raises_alarm():
+    link, monitor = make_monitor(model=1001)
+    result = monitor.verify(2002)
+    assert result.matched is False
+    assert monitor.state is MachineState.ALARM
+    assert link.run_permit is False
+    assert link.alarm is True
 
 
-def test_rescan_after_alarm_clears_it():
-    plc, controller = make_controller(["WRONG-999", "ABC-100"])
-    controller.run_forever(max_iterations=2)
-    assert plc.run_permit is True
-    assert plc.alarm is False
-    assert controller.state is State.RUNNING
+def test_invalid_scan_number_blocks():
+    link, monitor = make_monitor(model=1001)
+    result = monitor.verify(None)
+    assert result.matched is False
+    assert monitor.state is MachineState.ALARM
+    assert link.run_permit is False
 
 
-def test_case_insensitive_and_whitespace_match():
-    plc, controller = make_controller(["  abc-100 "])
-    controller.run_forever(max_iterations=1)
-    assert plc.run_permit is True
+def test_lockout_clears_permit():
+    link, monitor = make_monitor(model=1001)
+    monitor.verify(1001)
+    monitor.lock_out()
+    assert monitor.state is MachineState.LOCKED
+    assert link.run_permit is False
 
 
-def test_locked_on_startup_blocks_until_scan():
-    plc, controller = make_controller([], lock_on_startup=True)
-    # No scans available: the machine must remain blocked.
-    controller.run_forever(max_iterations=1)
-    assert plc.run_permit is False
-    assert controller.state is State.LOCKED
+def test_last_scan_echoed_to_plc():
+    link, monitor = make_monitor(model=1001)
+    monitor.verify(1001)
+    assert link.last_scan == 1001
 
 
-def test_last_scan_written_to_plc():
-    plc, controller = make_controller(["ABC-100"])
-    controller.run_forever(max_iterations=1)
-    assert plc.last_scan == "ABC-100"
+# --- MO number extraction ----------------------------------------------------
+
+SCAN = ScannerConfig(type="stdin")
+CMP = CompareConfig(mo_last_digits=4, digits_only=True)
 
 
-def test_normalize_respects_config():
-    cfg = CompareConfig(strip=True, ignore_case=True, collapse_internal_space=True)
-    assert normalize("  Foo   Bar ", cfg) == "foo bar"
-    cfg2 = CompareConfig(strip=False, ignore_case=False, collapse_internal_space=False)
-    assert normalize(" Foo ", cfg2) == " Foo "
+def test_last_four_digits_used():
+    assert extract_mo_number("MO-2024-981001", SCAN, CMP) == 1001
 
 
-def test_scan_pattern_extracts_model():
-    cfg = ScannerConfig(type="stdin", scan_pattern=r"MODEL=(?P<model>[^|]+)")
-    scanner = IterableScanner(["MO12345|MODEL=ABC-100|QTY=500"], cfg)
-    assert scanner.read() == "ABC-100"
+def test_digits_only_strips_separators():
+    assert extract_mo_number("12-34-56-78", SCAN, CMP) == 5678
+
+
+def test_whole_number_when_zero_digits():
+    cfg = CompareConfig(mo_last_digits=0, digits_only=True)
+    assert extract_mo_number("000123456", SCAN, cfg) == 123456
+
+
+def test_non_numeric_returns_none():
+    assert extract_mo_number("NO-DIGITS-HERE", SCAN, CMP) is None
+
+
+def test_scan_pattern_extracts_then_last_digits():
+    scan = ScannerConfig(type="stdin", scan_pattern=r"MODEL=(?P<model>\d+)")
+    assert extract_mo_number("JOB|MODEL=778801001|QTY=5", scan, CMP) == 1001

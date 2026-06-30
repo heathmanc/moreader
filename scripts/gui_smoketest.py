@@ -1,81 +1,80 @@
-"""Headless smoke test: build the GUI, drive the simulated flow, screenshot it.
+"""Headless smoke test for the PySide6 GUI.
 
-Run under xvfb:  xvfb-run -s '-screen 0 1100x760x24' python3 scripts/gui_smoketest.py
+Renders the operator screen and config screen to PNGs using the offscreen Qt
+platform, and drives the simulated flow.  Run with:
+
+    QT_QPA_PLATFORM=offscreen python3 scripts/gui_smoketest.py /tmp/moreader
+
 """
 
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from PySide6.QtWidgets import QApplication
+
 from moreader.config import Config
-from moreader.gui import MoreaderGUI
+from moreader.gui_qt import MainWindow, ScanDialog
 from moreader.worker import CMD_VERIFY
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/moreader_gui.png"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/moreader"
 
 
-def shot(name):
-    subprocess.run(f"import -window root {name}", shell=True, check=True)
+def pump(app, win, n=12):
+    # Let the worker connect/emit and the GUI drain events a few times.
+    import time
+    for _ in range(n):
+        win._drain_events()
+        app.processEvents()
+        time.sleep(0.05)
+
+
+def shot(win, name):
+    win.repaint()
+    QApplication.processEvents()
+    win.grab().save(name)
+    print("wrote", name)
 
 
 def main():
+    app = QApplication.instance() or QApplication([])
     cfgdir = tempfile.mkdtemp()
-    gui = MoreaderGUI(Config(), Path(cfgdir) / "config.yaml", simulate=True, expected_model="ABC-100")
+    win = MainWindow(Config(), Path(cfgdir) / "config.yaml", simulate=True)
+    win.resize(1180, 760)
+    win.show()
+    pump(app, win)
+    shot(win, f"{OUT}_operator_locked.png")
 
-    steps = {"n": 0}
+    # Scan that matches Machine 2 only (sim models 1001/1002/1003).
+    win.worker.submit(CMD_VERIFY, "MO-2024-1002")
+    pump(app, win)
+    shot(win, f"{OUT}_operator_scanned.png")
 
-    def tick():
-        gui.root.update_idletasks()
-        gui.root.update()
+    # Render the scan dialog.
+    dlg = ScanDialog(win)
+    dlg.field.setText("MO-2024-1002")
+    dlg.show()
+    QApplication.processEvents()
+    dlg.grab().save(f"{OUT}_scan_dialog.png")
+    print("wrote", f"{OUT}_scan_dialog.png")
+    dlg.close()
 
-    def drive():
-        # Let the worker connect and emit the initial LOCKED status.
-        for _ in range(20):
-            tick()
-            gui.root.after(20)
-        gui._pump_events()
-        tick()
+    # Open configuration (bypass the password prompt for the screenshot).
+    win.config_page = win._build_config_page()
+    win.config_index = win.stack.addWidget(win.config_page)
+    win._load_config_into_widgets()
+    win.stack.setCurrentIndex(win.config_index)
+    QApplication.processEvents()
+    shot(win, f"{OUT}_config_machines.png")
 
-        # 1) Wrong scan -> ALARM.
-        gui.commands.put((CMD_VERIFY, "WRONG-999"))
-        for _ in range(15):
-            tick(); gui.root.after(20)
-        gui._pump_events(); tick()
-        shot(OUT.replace(".png", "_alarm.png"))
-
-        # 2) Correct scan -> RUN ENABLED.
-        gui.commands.put((CMD_VERIFY, "ABC-100"))
-        for _ in range(15):
-            tick(); gui.root.after(20)
-        gui._pump_events(); tick()
-        shot(OUT.replace(".png", "_running.png"))
-
-        # 3) Open Configuration, unlock, show the PLC tab with tags.
-        gui.notebook.select(1)
-        tick()
-        gui.pw_var.set("2134chAP!@")
-        gui._unlock()
-        tick()
-        for _ in range(5):
-            tick(); gui.root.after(20)
-        shot(OUT.replace(".png", "_config_plc.png"))
-
-        print("BANNER:", gui.banner.cget("text"))
-        print("EXPECTED:", gui.expected_var.get())
-        print("LASTSCAN:", gui.lastscan_var.get())
-        print("UNLOCKED:", gui.unlocked)
-        gui._on_close()
-
-    gui.root.after(200, drive)
-    try:
-        gui.root.mainloop()
-    except Exception as exc:  # pragma: no cover
-        print("ERROR:", exc)
-        raise
+    # Report final machine states.
+    for m in win.worker.monitors:
+        print(f"{m.name}: state={m.state.value} model={m.model} permit={m.link.run_permit}")
+    win.worker.shutdown()
 
 
 if __name__ == "__main__":

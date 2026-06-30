@@ -1,7 +1,7 @@
 """Command-line entry point for moreader.
 
-By default this launches the GUI.  ``--headless`` runs the original console loop
-(useful for a kiosk/terminal deployment or for testing without a display).
+By default this launches the PySide6 GUI.  ``--headless`` runs a console loop
+(useful for a terminal deployment or for testing without a display).
 """
 
 from __future__ import annotations
@@ -11,9 +11,9 @@ import logging
 import sys
 
 from .config import Config, ConfigError, load_or_default
-from .controller import ShiftChangeController
-from .plc import PLCError, SimulatedPLC, build_plc
-from .scanner import ScannerError, build_scanner
+from .controller import MachineMonitor, Notifier
+from .plc import PLCError, build_machine
+from .scanner import ScannerError, build_scanner, extract_mo_number
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -21,61 +21,69 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="moreader",
         description=(
             "Verify a scanned manufacturing-order barcode against the model "
-            "number an Allen Bradley PLC is set to run, gating the machine on a "
-            "shift-by-shift basis."
+            "number (DINT) each of three Allen Bradley PLCs is set to run, "
+            "gating each machine on a shift-by-shift basis."
         ),
     )
-    parser.add_argument(
-        "-c", "--config", help="Path to YAML config file (defaults to ./config.yaml)."
-    )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run the console loop instead of the GUI.",
-    )
-    parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Use a simulated PLC instead of real hardware (for demos/tests).",
-    )
-    parser.add_argument(
-        "--expected-model",
-        default="ABC-100",
-        help="With --simulate, the model the simulated PLC is configured to run.",
-    )
+    parser.add_argument("-c", "--config", help="Path to YAML config file (defaults to ./config.yaml).")
+    parser.add_argument("--headless", action="store_true", help="Run the console loop instead of the GUI.")
+    parser.add_argument("--simulate", action="store_true", help="Use simulated PLCs (for demos/tests).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
 
-def _run_headless(config: Config, simulate: bool, expected_model: str) -> int:
-    if simulate or config.plc.driver == "simulated":
-        plc = SimulatedPLC(config.plc, expected_model)
-    else:
-        plc = build_plc(config.plc)
+def _run_headless(config: Config, simulate: bool) -> int:
+    driver = "simulated" if (simulate or config.plc.driver == "simulated") else config.plc.driver
+    sim_models = [1001, 1002, 1003]
+    monitors = []
+    for i, machine_cfg in enumerate(config.plc.machines):
+        link = build_machine(machine_cfg, driver, sim_model=sim_models[i % len(sim_models)])
+        monitors.append(MachineMonitor(link))
+
+    notifier = Notifier()
+    for monitor in monitors:
+        try:
+            monitor.connect()
+        except PLCError as exc:
+            print(f"{monitor.name}: connection failed — {exc}", file=sys.stderr)
+
+    connected = [m for m in monitors if m.connected]
+    if not connected:
+        print("No PLCs connected; exiting.", file=sys.stderr)
+        return 1
+
+    if config.shift.lock_on_startup:
+        notifier.shift_change("startup")
+        for monitor in connected:
+            monitor.lock_out()
+
     try:
         scanner = build_scanner(config.scanner)
     except ScannerError as exc:
         print(f"Startup error: {exc}", file=sys.stderr)
         return 1
-    controller = ShiftChangeController(
-        plc=plc, scanner=scanner, compare_cfg=config.compare, shift_cfg=config.shift
-    )
+
     try:
-        plc.connect()
-    except PLCError as exc:
-        print(f"Could not connect to PLC: {exc}", file=sys.stderr)
-        return 1
-    try:
-        controller.run_forever()
+        while True:
+            raw = scanner.read_raw("Scan MO > ")
+            if raw is None:
+                break
+            if not raw.strip():
+                continue
+            number = extract_mo_number(raw, config.scanner, config.compare)
+            results = [m.verify(number) for m in monitors if m.connected]
+            notifier.scan(number, results)
     except KeyboardInterrupt:
-        print("\nInterrupted; locking out machine and exiting.")
-        try:
-            plc.set_run_permit(False)
-        except PLCError:
-            pass
+        print("\nInterrupted; locking out all machines.")
+        for monitor in monitors:
+            if monitor.connected:
+                try:
+                    monitor.lock_out()
+                except PLCError:
+                    pass
     finally:
-        scanner.close()
-        plc.close()
+        for monitor in monitors:
+            monitor.close()
     return 0
 
 
@@ -93,14 +101,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.headless:
-        return _run_headless(config, args.simulate, args.expected_model)
+        return _run_headless(config, args.simulate)
 
     try:
-        from .gui import launch
-    except Exception as exc:  # tkinter missing, no display, etc.
+        from .gui_qt import launch
+    except Exception as exc:  # PySide6 missing, no display, etc.
         print(f"Could not start the GUI ({exc}). Try --headless.", file=sys.stderr)
         return 1
-    launch(config, config_path, simulate=args.simulate, expected_model=args.expected_model)
+    launch(config, config_path, simulate=args.simulate)
     return 0
 
 

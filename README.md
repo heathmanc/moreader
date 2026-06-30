@@ -1,72 +1,69 @@
 # moreader
 
-Manufacturing-order scan verification for an Allen Bradley Logix PLC, with a
-polished password-protected GUI.
+Manufacturing-order scan verification for three Allen Bradley PLCs, with a
+PySide6 industrial-HMI front end.
 
-At every shift change the incoming operator must scan the manufacturing order
-barcode. `moreader` reads the scan from a USB barcode scanner, compares it to the
-**model number the PLC is currently set to run**, and only then grants the PLC's
-*run permit*. If the scan does not match, it raises an **alarm** and keeps the
-machine locked out until a correct order is scanned.
+Each shift the incoming operator presses **VERIFY MO** and scans the
+manufacturing order. `moreader` takes the **last 4 digits** of the barcode and
+compares them to the model-number **DINT** each PLC is currently set to run
+(default tag `recipe[0].Name`). A machine whose model matches gets its **run
+permit**; a mismatch raises that machine's **alarm** and keeps it locked out.
 
 ```
- USB scanner ──▶ moreader ──▶ compare ──▶  match  ──▶ set RunPermit = TRUE  (PLC may run)
-                    ▲                      mismatch ─▶ set Alarm = TRUE      (PLC blocked)
-                    │
-            shift change (clock or PLC bit) clears RunPermit and forces a re-scan
+                              ┌─ PLC 1 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
+ scan MO ─▶ last 4 digits ─▶ ─┼─ PLC 2 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
+                              └─ PLC 3 (recipe[0].Name = DINT) ─ match? ─ permit/alarm
+ shift change (clock or PLC bit) clears all run permits and forces a re-scan
 ```
 
-## The GUI
+## The HMI
 
-Run `python -m moreader` and you get two tabs:
+`python -m moreader` opens a full-screen-friendly industrial HMI:
 
-* **Operator** — a large colour-coded status banner (LOCKED / RUN ENABLED /
-  ALARM), the model the PLC is set to run, the last scan, the current shift, a
-  scan box (a USB keyboard-wedge scanner types straight into it), and a live
-  event log.
-* **Configuration** — **password protected** (default `2134chAP!@`, stored in
-  the YAML). Inside are sub-tabs:
-  * **PLC** — driver, IP, slot, and every tag with its **name and description**.
-  * **Scanner** — type, serial port/baud, optional model-extraction regex.
+* **Operator screen** — three machine tiles (one per PLC), each with a status
+  lamp, the model DINT it is set to run, and the last scanned value. Tiles are
+  colour-coded: green = RUN ENABLED, red = ALARM, amber = LOCKED, grey =
+  OFFLINE. There is **no text box** — the operator presses the large **VERIFY
+  MO** button, which opens a modal dialog the USB scanner sends the barcode
+  into. A **NEW SHIFT** button re-locks all machines on demand.
+* **Configuration screen** — **password protected** (default `2134chAP!@`,
+  stored in the YAML). Tabs:
+  * **Machines** — per PLC: name, IP, slot, and every tag with its **name and
+    description**.
+  * **Scanner** — type and an optional model-extraction regex.
+  * **Compare** — how many trailing digits to match, digit-stripping.
   * **Shift** — shift start times, PLC-request watch, lock-on-startup, poll rate.
-  * **Compare** — whitespace/case matching rules.
   * **Security** — change the configuration password.
 
-  **Save & Apply** writes the YAML and reconnects the PLC.
-
-The entire configuration is editable from the GUI; you never have to touch the
-YAML by hand (though you can).
-
-## How it works
-
-1. On startup (and at every shift change) the run permit is cleared, so the PLC
-   cannot run the product.
-2. The operator scans the manufacturing order into the scan box.
-3. `moreader` reads the PLC's expected-model tag, normalises both strings, and
-   compares them.
-   * **Match** → sets `run_permit` True, clears the alarm. The machine can run.
-   * **Mismatch** → sets `alarm` True, leaves the run permit cleared, waits for
-     another scan.
-4. While running it watches for the next shift change — a configured clock
-   boundary (e.g. 06:00 / 14:00 / 22:00) or a rising edge on the PLC/HMI
-   `shift_request` bit — and locks out again when it occurs.
+  **Save & Apply** writes the YAML and reconnects the PLCs.
 
 All PLC I/O runs on a background thread, so a slow or offline PLC never freezes
-the interface. Your PLC ladder gates the machine by interlocking on the
-`run_permit` bit; `moreader` only sets/clears bits and reads the model tag.
+the interface; the GUI polls the worker's event queue with a timer.
+
+## How a scan is matched
+
+1. The raw barcode is read in the scan dialog.
+2. An optional regex (`scanner.scan_pattern`) can pull the model out of a richer
+   MO string.
+3. Non-digits are stripped (configurable) and the **last N digits** are taken
+   (`compare.mo_last_digits`, default 4) and parsed as an integer.
+4. That integer is compared to each PLC's model DINT. Match → `run_permit` set,
+   alarm cleared; mismatch → `run_permit` cleared, `alarm` set.
+
+Your PLC ladder gates the machine by interlocking on its `run_permit` bit;
+`moreader` only sets/clears bits and reads the model DINT.
 
 ## Install
 
 ```bash
 pip install -r requirements.txt
-# On Linux, Tkinter is an OS package:
-#   sudo apt-get install python3-tk
-# On Windows/macOS, Tkinter ships with the standard Python installer.
+# Linux also needs the Qt runtime libraries, e.g. on Debian/Ubuntu:
+#   sudo apt-get install libegl1 libgl1 libxkbcommon0 libfontconfig1
 ```
 
+* `PySide6` — the GUI.
 * `pylogix` — EtherNet/IP comms to CompactLogix / ControlLogix.
 * `pyyaml` — config file.
-* `pyserial` — only for a serial (USB-CDC) scanner in headless mode.
 
 ## Run
 
@@ -74,42 +71,43 @@ pip install -r requirements.txt
 # GUI against real hardware (creates/uses ./config.yaml)
 python -m moreader --config config.yaml
 
-# GUI with NO hardware — simulated PLC, type scans into the box
-python -m moreader --simulate --expected-model ABC-100
+# GUI with NO hardware — three simulated PLCs (models 1001/1002/1003)
+python -m moreader --simulate
 
-# Headless console mode (kiosk/terminal, no display)
+# Headless console mode (no display)
 python -m moreader --config config.yaml --headless
 ```
 
-Try simulated mode: type a wrong value to see the alarm, then the matching model
-to enable the run. Open **Configuration**, enter `2134chAP!@`, and edit the tags.
+In simulated mode, press **VERIFY MO** and scan/type `...1002` to enable only
+Machine 2; `...1001` enables Machine 1, etc. Open **Settings** with `2134chAP!@`
+to edit the PLC tags.
 
 ## Configure
 
-Copy `config.example.yaml` to `config.yaml` (or just let the GUI create it on
-first **Save**). Key tags to create in the PLC:
+Copy `config.example.yaml` to `config.yaml` (or let the GUI create it on the
+first **Save**). Per-PLC tags:
 
-| Purpose                          | Config key       | Type   |
-| -------------------------------- | ---------------- | ------ |
-| Model the PLC is set to run      | `expected_model` | STRING |
-| Run permit (gate motion on this) | `run_permit`     | BOOL   |
-| Scan-mismatch alarm              | `alarm`          | BOOL   |
-| Shift-change request (optional)  | `shift_request`  | BOOL   |
-| Last-scan echo for HMI (optional)| `last_scan`      | STRING |
+| Purpose                          | Tag key            | Type   |
+| -------------------------------- | ------------------ | ------ |
+| Model the PLC is set to run      | `model_tag`        | DINT   |
+| Run permit (gate motion on this) | `run_permit_tag`   | BOOL   |
+| Scan-mismatch alarm              | `alarm_tag`        | BOOL   |
+| Shift-change request (optional)  | `shift_request_tag`| BOOL   |
+| Last-scan echo (optional)        | `last_scan_tag`    | DINT   |
 
 ## Project layout
 
-| File                      | Responsibility                                   |
-| ------------------------- | ------------------------------------------------ |
-| `moreader/config.py`      | Load/validate/save YAML into typed objects.      |
-| `moreader/plc.py`         | pylogix Logix driver + a simulated PLC.          |
-| `moreader/scanner.py`     | Scanner inputs + model-extraction helper.        |
-| `moreader/shift.py`       | Shift-change detection (clock + PLC bit edge).   |
-| `moreader/controller.py`  | LOCKED/RUNNING/ALARM state machine.              |
-| `moreader/worker.py`      | Background PLC thread (keeps the GUI responsive).|
-| `moreader/gui.py`         | Tkinter/ttk GUI.                                 |
-| `moreader/cli.py`         | Entry point (GUI default, `--headless` option).  |
-| `scripts/gui_smoketest.py`| Headless GUI smoke test / screenshot driver.     |
+| File                       | Responsibility                                   |
+| -------------------------- | ------------------------------------------------ |
+| `moreader/config.py`       | Load/validate/save YAML (machines, tags, etc.).  |
+| `moreader/plc.py`          | pylogix per-machine link + a simulated machine.  |
+| `moreader/scanner.py`      | Scan input + last-N-digit MO number parser.      |
+| `moreader/controller.py`   | Per-machine LOCKED/RUNNING/ALARM state machine.  |
+| `moreader/shift.py`        | Shift-change detection (clock + PLC bit edge).   |
+| `moreader/worker.py`       | Background thread driving all three PLCs.        |
+| `moreader/gui_qt.py`       | PySide6 industrial HMI.                          |
+| `moreader/cli.py`          | Entry point (GUI default, `--headless` option).  |
+| `scripts/gui_smoketest.py` | Offscreen GUI smoke test / screenshot driver.    |
 
 ## Tests
 
@@ -118,15 +116,7 @@ pip install pytest
 python -m pytest tests/ -q
 ```
 
-The 25 tests run entirely against the simulated PLC — no hardware required.
-
-## Adapting it
-
-* **Light stack / different alarm output** — the controller only sets
-  `run_permit`, `alarm`, and (optionally) `last_scan`; wire those into your
-  ladder however you need.
-* **Tag addressing** — pylogix uses named tags (`Program:MainProgram.ModelNumber`,
-  `MyModel`, `array[3]`, UDT members, etc.); set them on the PLC config tab.
+The 29 tests run entirely against simulated PLCs — no hardware required.
 
 ## Safety note
 
