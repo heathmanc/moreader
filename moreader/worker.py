@@ -18,6 +18,7 @@ import queue
 import threading
 import time
 
+from .audit import AuditLog
 from .config import Config
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier, State
 from .plc import PLCError, build_encapsulator, build_master
@@ -68,10 +69,12 @@ class PLCWorker(threading.Thread):
 
         self.notifier = QueueNotifier(self.events)
         self.detector = ShiftDetector(config.shift)
+        self.audit = AuditLog(config.audit.directory, config.audit.enabled)
         self.encapsulators: list[EncapsulatorMonitor] = []
         self.master: MasterMonitor | None = None
         self._running = False
         self._last_beat = 0.0
+        self._offline: set[str] = set()   # names currently logged as offline (throttle)
         self.battery_scanned: int | None = None
         self.battery_matched: bool | None = None
 
@@ -123,18 +126,33 @@ class PLCWorker(threading.Thread):
     def _connect_enc(self, enc: EncapsulatorMonitor) -> None:
         try:
             enc.connect()
-            self.notifier.info(f"Connected to {enc.name}.")
+            self._report_online(enc.name)
         except PLCError as exc:
             enc.mark_disconnected()
-            self.notifier._log("alarm", f"{enc.name}: connection failed — {exc}")
+            self._report_offline(enc.name, exc)
 
     def _connect_master(self) -> None:
         try:
             self.master.connect()
-            self.notifier.info(f"Connected to master {self.master.name}.")
+            self._report_online(self.master.name)
         except PLCError as exc:
             self.master.mark_disconnected()
-            self.notifier._log("alarm", f"{self.master.name}: connection failed — {exc}")
+            self._report_offline(self.master.name, exc)
+
+    def _report_offline(self, name: str, exc: Exception) -> None:
+        # Log/audit only on the transition to offline, not on every retry.
+        if name not in self._offline:
+            self._offline.add(name)
+            self.notifier._log("alarm", f"{name}: connection failed — {exc}")
+            self.audit.record("PLC_OFFLINE", name, detail=str(exc))
+
+    def _report_online(self, name: str) -> None:
+        if name in self._offline:
+            self._offline.discard(name)
+            self.notifier._log("ok", f"{name}: reconnected.")
+            self.audit.record("PLC_ONLINE", name)
+        else:
+            self.notifier.info(f"Connected to {name}.")
 
     # -- command handling ----------------------------------------------
     def _handle(self, command: str, value: str | None) -> None:
@@ -152,6 +170,7 @@ class PLCWorker(threading.Thread):
         if command == CMD_LOCKOUT:
             self.notifier._log("warn", "Manual lockout — MO_Verified/MO_Bypassed cleared, cycle stop requested.")
             self._lockout(cycle_stop=True)
+            self.audit.record("LOCKOUT", detail="manual lockout button")
             self._emit_status()
             return
         if command == CMD_BYPASS:
@@ -194,13 +213,16 @@ class PLCWorker(threading.Thread):
             self.notifier._log("warn", f"MO BYPASS ENABLED by operator — {self.master.name} may run without a verified scan.")
         else:
             self.notifier._log("info", "MO bypass cleared.")
+        self.audit.record("BYPASS", "ON" if on else "OFF", detail="operator bypass")
 
-    def _reject(self, title: str, reasons: list[str]) -> None:
+    def _reject(self, title: str, reasons: list[str], stuffed=None, assembled=None, battery=None) -> None:
         """Block the master, log the reasons, and pop an error screen in the GUI."""
 
         for r in reasons:
             self.notifier._log("alarm", r)
         self.events.put({"type": "error", "title": title, "reasons": reasons})
+        self.audit.record("VERIFY", "FAIL", stuffed_mo=stuffed, assembled_mo=assembled,
+                          battery=battery, detail=" | ".join(reasons))
         if self.master and self.master.connected and self.master.mo_verified:
             try:
                 self.master.set_verified(False)
@@ -221,19 +243,23 @@ class PLCWorker(threading.Thread):
             raw_assembled = None
             raw_battery = None
 
+        assembled_digits = None
+
         # --- Stuffed Element MO -> encapsulator recipe check ---
         mo_text = (raw_mo or "").strip("\r\n").strip()
         mo_len = self.config.compare.mo_length
         if mo_len and len(mo_text) != mo_len:
             self._reject("STUFFED ELEMENT MO SCAN FAILED",
                          [f"MO must be {mo_len} characters — you scanned {len(mo_text)}.",
-                          "Make sure you scanned the Stuffed Element MO, not another label."])
+                          "Make sure you scanned the Stuffed Element MO, not another label."],
+                         stuffed=mo_text)
             return
 
         number = extract_mo_digits(raw_mo, self.config.scanner, self.config.compare)
         if number is None:
             self._reject("STUFFED ELEMENT MO SCAN FAILED",
-                         [f"No number could be read from the scan {raw_mo!r}."])
+                         [f"No number could be read from the scan {raw_mo!r}."],
+                         stuffed=mo_text)
             return
         self.notifier._log("info", f"Stuffed Element MO {number} → comparing to each encapsulator recipe.")
 
@@ -267,14 +293,16 @@ class PLCWorker(threading.Thread):
                 self._reject("ASSEMBLED BATTERY MO SCAN FAILED",
                              [f"Assembled Battery MO must be {sec.assembled_mo_length} characters — "
                               f"you scanned {len(assembled_text)}.",
-                              "Make sure you scanned the Assembled Battery MO."])
+                              "Make sure you scanned the Assembled Battery MO."],
+                             stuffed=number)
                 return
             if sec.battery_min_length and len(battery_text) < sec.battery_min_length:
                 self._reset_battery()
                 self._reject("BATTERY LABEL SCAN FAILED",
                              [f"Battery label must be at least {sec.battery_min_length} characters — "
                               f"you scanned {len(battery_text)}.",
-                              "Make sure you scanned the battery label, not the MO."])
+                              "Make sure you scanned the battery label, not the MO."],
+                             stuffed=number)
                 return
             assembled_digits = extract_last_digits(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
             self.battery_scanned = extract_battery_digits(battery_text, self.config.scanner, sec.battery_first_digits)
@@ -292,7 +320,8 @@ class PLCWorker(threading.Thread):
                                f"but the Assembled Battery MO ends in {assembled_digits}.")
 
         if reasons:
-            self._reject("SCAN VERIFICATION FAILED", reasons)
+            self._reject("SCAN VERIFICATION FAILED", reasons,
+                         stuffed=number, assembled=assembled_digits, battery=self.battery_scanned)
             return
 
         # --- success ---
@@ -302,6 +331,8 @@ class PLCWorker(threading.Thread):
                 self.master.set_cycle_stop(False)   # release the graceful stop
             except PLCError as exc:
                 self._fail_master(exc)
+        self.audit.record("VERIFY", "PASS", stuffed_mo=number,
+                          assembled_mo=assembled_digits, battery=self.battery_scanned)
         self.notifier._log("ok", f"MO {number} VERIFIED — {self.master.name} may run.")
         self._emit_status()
 
@@ -328,6 +359,7 @@ class PLCWorker(threading.Thread):
                 if not self.master.read_verified():
                     self.notifier._log("warn", "Changeover detected (PLC cleared MO_Verified) — scan required.")
                     self._lockout(cycle_stop=False)   # the PLC is driving the changeover
+                    self.audit.record("CHANGEOVER", detail="PLC cleared MO_Verified")
                     self._emit_status()
                     return
             except PLCError as exc:
@@ -338,6 +370,7 @@ class PLCWorker(threading.Thread):
         if self.detector.check() and running:
             self.notifier.shift_change(self.detector.current_shift_label())
             self._lockout(cycle_stop=True)   # graceful stop so the cycle finishes
+            self.audit.record("SHIFT_LOCKOUT", detail=self.detector.current_shift_label())
             self._emit_status()
             return
 
@@ -358,11 +391,11 @@ class PLCWorker(threading.Thread):
 
     def _fail_enc(self, enc: EncapsulatorMonitor, exc: Exception) -> None:
         enc.mark_disconnected()
-        self.notifier._log("alarm", f"{enc.name}: PLC I/O error — {exc}")
+        self._report_offline(enc.name, exc)
 
     def _fail_master(self, exc: Exception) -> None:
         self.master.mark_disconnected()
-        self.notifier._log("alarm", f"{self.master.name}: PLC I/O error — {exc}")
+        self._report_offline(self.master.name, exc)
 
     # -- event emission -------------------------------------------------
     def _emit_status(self) -> None:

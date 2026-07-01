@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from .config import Config, ConfigError, load_or_default
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier
@@ -27,6 +28,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-c", "--config", help="Path to YAML config file (defaults to ./config.yaml).")
     parser.add_argument("--headless", action="store_true", help="Run the console loop instead of the GUI.")
     parser.add_argument("--simulate", action="store_true", help="Use simulated PLCs (for demos/tests).")
+    parser.add_argument("--kiosk", action="store_true",
+                        help="Full-screen, frameless; closing requires the config password (factory station).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -108,12 +111,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.headless:
         return _run_headless(config, args.simulate)
 
+    # Single-instance guard so two copies never fight over the PLC writes.
+    lock = None
+    try:
+        import tempfile
+
+        from PySide6.QtCore import QLockFile
+
+        lock = QLockFile(str(Path(tempfile.gettempdir()) / "moreader.lock"))
+        lock.setStaleLockTime(0)
+        if not lock.tryLock(100):
+            print("moreader is already running on this machine.", file=sys.stderr)
+            return 1
+    except Exception:  # pragma: no cover - lock is best-effort
+        lock = None
+
     try:
         from .gui_qt import launch
     except Exception as exc:  # PySide6 missing, no display, etc.
         print(f"Could not start the GUI ({exc}). Try --headless.", file=sys.stderr)
         return 1
-    launch(config, config_path, simulate=args.simulate)
+    launch(config, config_path, simulate=args.simulate, kiosk=args.kiosk)
+    if lock is not None:
+        lock.unlock()
     return 0
 
 

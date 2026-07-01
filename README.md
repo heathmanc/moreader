@@ -80,6 +80,38 @@ MO then becomes a 3-step scan:
 label matches step 2. Scan-length checks (each MO exactly 9 characters, the
 battery label at least 10) prevent the same barcode being scanned twice.
 
+## Scanners
+
+Two scanner types are supported (Settings → Scanner):
+
+* **keyboard** — HID keyboard-wedge (the scanner "types" the barcode). Its
+  keystrokes are captured directly by the scan popup.
+* **serial** — a virtual COM port (e.g. a **Zebra** scanner in USB-CDC mode).
+  Set the port (`COM4`, `/dev/ttyACM0`, …) and baud rate; barcodes are read over
+  pyserial and delivered to the scan popup automatically.
+
+## Audit trail
+
+Every scan and gate change is appended to a daily CSV in `audit.directory`
+(`logs/moreader-YYYY-MM-DD.csv`): timestamp, event (VERIFY / BYPASS / LOCKOUT /
+SHIFT_LOCKOUT / CHANGEOVER / PLC_OFFLINE…), result (PASS/FAIL), the MO(s), the
+battery digits, and the failure reason. Disable it with `audit.enabled: false`.
+
+## Kiosk / station deployment
+
+Run with `--kiosk` for a factory station: full-screen, frameless, and the window
+can only be closed via the password-gated **Exit App** button in Settings. A
+single-instance lock prevents two copies fighting over the PLC writes.
+
+```bash
+python -m moreader --config config.yaml --kiosk
+```
+
+On Windows, set that command as a **Task Scheduler** task "at log on" with
+"restart on failure" so the station relaunches after a crash or reboot. The
+`Heartbeat` DINT must be watchdogged in the PLC so the run permit drops if this
+application ever stops (see the safety note).
+
 ## Install
 
 ```bash
@@ -89,6 +121,10 @@ pip install -r requirements.txt
 ```
 
 * `PySide6` — the GUI.  `pylogix` — EtherNet/IP comms.  `pyyaml` — config.
+* `pyserial` — only for a serial (virtual COM port) scanner.
+
+You can package it as a single `.exe` with PyInstaller so the station needs no
+Python install.
 
 ## Run
 
@@ -118,7 +154,8 @@ verify all three encapsulators and set the master. Open **Settings** with
 | `moreader/shift.py`        | Shift-change detection.                          |
 | `moreader/worker.py`       | Background thread; verification + heartbeat.     |
 | `moreader/gui_qt.py`       | PySide6 industrial HMI.                           |
-| `moreader/cli.py`          | Entry point (GUI default, `--headless`).         |
+| `moreader/audit.py`        | Daily CSV audit trail.                            |
+| `moreader/cli.py`          | Entry point (GUI default, `--headless`, `--kiosk`).|
 | `scripts/gui_smoketest.py` | Offscreen GUI smoke test / screenshot driver.    |
 
 ## Tests

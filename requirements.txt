@@ -6,3 +6,6 @@ pylogix>=1.0
 
 # GUI (industrial HMI)
 PySide6>=6.5
+
+# Serial (virtual COM port) scanners, e.g. Zebra in USB-CDC mode
+pyserial>=3.5

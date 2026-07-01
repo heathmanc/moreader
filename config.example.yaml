@@ -53,9 +53,12 @@ plc:
         description: DINT the program increments so the master PLC knows the app is alive
 
 scanner:
-  # type: "keyboard" (HID keyboard-wedge -> types into the scan popup) or
-  #       "stdin" (piped input -- for testing/headless)
+  # type: "keyboard" (HID keyboard-wedge -> types into the scan popup),
+  #       "serial"   (virtual COM port, e.g. a Zebra scanner in USB-CDC mode),
+  #       "stdin"    (piped input -- for testing/headless)
   type: keyboard
+  port: COM4                    # serial only: COM4 (Windows) or /dev/ttyACM0 (Linux)
+  baudrate: 9600                # serial only
   # Optional regex with a named group "model" to pull the number out of a richer
   # MO barcode before the last-N-digits rule, e.g. 'MO(?P<model>\d+)'.
   scan_pattern: null
@@ -82,3 +85,7 @@ shift:
     - "22:00"
   lock_on_startup: true        # require a scan before the first run after start
   poll_interval: 2.0           # seconds between shift-change checks while running
+
+audit:
+  enabled: true                # write a daily CSV of every scan/gate change
+  directory: logs              # folder for moreader-YYYY-MM-DD.csv files

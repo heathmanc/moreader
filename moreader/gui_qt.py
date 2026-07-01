@@ -41,6 +41,8 @@ from PySide6.QtWidgets import (
 )
 
 from .config import ENCAP_RECIPE, MASTER_TAGS, Config, ConfigError, from_dict, save_config
+from .plc import PLCError, build_encapsulator, build_master
+from .scanner import ScannerError, SerialScanSource
 from .worker import CMD_BYPASS, CMD_LOCKOUT, CMD_VERIFY, PLCWorker
 
 # --- industrial palette ------------------------------------------------------
@@ -280,12 +282,13 @@ class ScanDialog(QDialog):
     returns all captured values.
     """
 
-    def __init__(self, steps, parent=None) -> None:
+    def __init__(self, steps, parent=None, scan_source=None) -> None:
         super().__init__(parent)
         self.steps = steps                 # list of (key, title, hint)
         self.index = 0
         self.values: dict[str, str] = {}
         self._buffer = ""
+        self._source = scan_source         # SerialScanSource, or None for keyboard
         self.setWindowTitle("Scan")
         self.setModal(True)
         self.setMinimumWidth(580)
@@ -334,6 +337,12 @@ class ScanDialog(QDialog):
         lay.addLayout(row)
 
         self.setFocusPolicy(Qt.StrongFocus)
+
+        # Serial scanners deliver barcodes asynchronously; poll the source.
+        self._serial_timer = None
+        if self._source is not None:
+            self._serial_timer = QTimer(self)
+            self._serial_timer.timeout.connect(self._poll_serial)
         self._show_step()
 
     def _show_step(self) -> None:
@@ -346,10 +355,22 @@ class ScanDialog(QDialog):
         self.ok_btn.setText("OK" if self.index == len(self.steps) - 1 else "Next ›")
         self._buffer = ""
         self.display.setText("waiting for scan…")
+        if self._source is not None:
+            self._source.flush()          # each step waits for a fresh scan
+
+    def _poll_serial(self) -> None:
+        code = self._source.poll()
+        if code:
+            self._buffer = code
+            self.display.setText(code)
+            self._advance()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self.setFocus()
+        if self._source is not None:
+            self._source.flush()          # drop any stale barcode
+            self._serial_timer.start(50)
 
     def _advance(self) -> None:
         if not self._buffer.strip():
@@ -364,11 +385,13 @@ class ScanDialog(QDialog):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        if key in (Qt.Key_Return, Qt.Key_Enter):
-            self._advance()
-            return
         if key == Qt.Key_Escape:
             self.reject()
+            return
+        if self._source is not None:
+            return          # serial mode: ignore the keyboard entirely
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            self._advance()
             return
         if key == Qt.Key_Backspace:
             self._buffer = self._buffer[:-1]
@@ -377,6 +400,11 @@ class ScanDialog(QDialog):
             if text and text.isprintable():
                 self._buffer += text
         self.display.setText(self._buffer or "waiting for scan…")
+
+    def done(self, result: int) -> None:
+        if self._serial_timer is not None:
+            self._serial_timer.stop()
+        super().done(result)
 
     def result_values(self) -> dict[str, str]:
         return dict(self.values)
@@ -435,23 +463,29 @@ class ScanErrorDialog(QDialog):
 
 
 class MainWindow(QWidget):
-    def __init__(self, config: Config, config_path: Path, simulate: bool = False) -> None:
+    def __init__(self, config: Config, config_path: Path, simulate: bool = False, kiosk: bool = False) -> None:
         super().__init__()
         self.config = config
         self.config_path = Path(config_path)
         self.simulate = simulate
+        self.kiosk = kiosk
         self.setWindowTitle("moreader — Manufacturing Order Verification")
         self.resize(1180, 780)
         self.setStyleSheet(STYLESHEET)
+        if kiosk:
+            self.setWindowFlag(Qt.FramelessWindowHint, True)
 
         self.events: queue.Queue = queue.Queue()
         self.worker: PLCWorker | None = None
+        self.scan_source = None
+        self.scan_source_error = ""
         self.tiles: list[EncapsulatorTile] = []
         self.master_panel: MasterPanel | None = None
         self.cfg_widgets: dict = {}
         self.config_index = None
         self._master_bypassed = False
         self._error_open = False
+        self._allow_close = not kiosk
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -461,6 +495,7 @@ class MainWindow(QWidget):
         root.addWidget(self.stack, 1)
         self.stack.addWidget(self._build_operator_page())
 
+        self._open_scan_source()
         self._start_worker()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._drain_events)
@@ -563,7 +598,13 @@ class MainWindow(QWidget):
                 "mo", "SCAN MANUFACTURING ORDER",
                 f"Scan the MO barcode. The last {n_last} digits are matched to every encapsulator.",
             )]
-        dialog = ScanDialog(steps, self)
+        # Serial scanner configured but the port could not be opened.
+        if self.config.scanner.type == "serial" and self.scan_source is None:
+            self._show_error("SCANNER NOT AVAILABLE",
+                             [self.scan_source_error or "The serial scanner could not be opened.",
+                              "Check the COM port and cable in Settings → Scanner."])
+            return
+        dialog = ScanDialog(steps, self, scan_source=self.scan_source)
         if dialog.exec() != QDialog.Accepted or not self.worker:
             return
         vals = dialog.result_values()
@@ -621,9 +662,15 @@ class MainWindow(QWidget):
         back = QPushButton("‹ Back to Operator")
         back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         bar.addWidget(back)
+        exit_btn = QPushButton("Exit App")
+        exit_btn.clicked.connect(self._exit_app)
+        bar.addWidget(exit_btn)
         bar.addStretch(1)
         self.save_msg = QLabel("")
         bar.addWidget(self.save_msg)
+        self.test_btn = QPushButton("Test Connections")
+        self.test_btn.clicked.connect(self._test_connections)
+        bar.addWidget(self.test_btn)
         reload_btn = QPushButton("Reload")
         reload_btn.clicked.connect(self._load_config_into_widgets)
         save_btn = QPushButton("Save & Apply")
@@ -710,14 +757,23 @@ class MainWindow(QWidget):
         grid.setColumnStretch(1, 1)
         grid.addWidget(QLabel("Scanner type"), 0, 0)
         self.cfg_widgets["scanner_type"] = QComboBox()
-        self.cfg_widgets["scanner_type"].addItems(["keyboard", "stdin"])
+        self.cfg_widgets["scanner_type"].addItems(["keyboard", "serial", "stdin"])
         grid.addWidget(self.cfg_widgets["scanner_type"], 0, 1)
-        grid.addWidget(QLabel("HID keyboard-wedge scanner types into the scan popup."), 0, 2)
-        grid.addWidget(QLabel("Scan pattern (regex)"), 1, 0)
+        grid.addWidget(QLabel("keyboard = HID wedge · serial = virtual COM port (e.g. Zebra)"), 0, 2)
+        grid.addWidget(QLabel("Serial port"), 1, 0)
+        self.cfg_widgets["scanner_port"] = QLineEdit()
+        grid.addWidget(self.cfg_widgets["scanner_port"], 1, 1)
+        grid.addWidget(QLabel("serial only, e.g. COM4 (Windows) or /dev/ttyACM0"), 1, 2)
+        grid.addWidget(QLabel("Baud rate"), 2, 0)
+        self.cfg_widgets["scanner_baud"] = QSpinBox()
+        self.cfg_widgets["scanner_baud"].setRange(300, 921600)
+        grid.addWidget(self.cfg_widgets["scanner_baud"], 2, 1)
+        grid.addWidget(QLabel("serial only, typically 9600 or 115200"), 2, 2)
+        grid.addWidget(QLabel("Scan pattern (regex)"), 3, 0)
         self.cfg_widgets["scan_pattern"] = QLineEdit()
-        grid.addWidget(self.cfg_widgets["scan_pattern"], 1, 1)
-        grid.addWidget(QLabel("optional, e.g. MO(?P<model>\\d+)"), 1, 2)
-        grid.setRowStretch(2, 1)
+        grid.addWidget(self.cfg_widgets["scan_pattern"], 3, 1)
+        grid.addWidget(QLabel("optional, e.g. MO(?P<model>\\d+)"), 3, 2)
+        grid.setRowStretch(4, 1)
         return w
 
     def _build_compare_tab(self) -> QWidget:
@@ -844,6 +900,8 @@ class MainWindow(QWidget):
             desc_edit.setText(spec.description)
         self.cfg_widgets["heartbeat_interval"].setValue(c.plc.heartbeat_interval)
         self.cfg_widgets["scanner_type"].setCurrentText(c.scanner.type)
+        self.cfg_widgets["scanner_port"].setText(c.scanner.port)
+        self.cfg_widgets["scanner_baud"].setValue(c.scanner.baudrate)
         self.cfg_widgets["scan_pattern"].setText(c.scanner.scan_pattern or "")
         self.cfg_widgets["mo_last_digits"].setValue(c.compare.mo_last_digits)
         self.cfg_widgets["digits_only"].setChecked(c.compare.digits_only)
@@ -894,6 +952,8 @@ class MainWindow(QWidget):
             },
             "scanner": {
                 "type": self.cfg_widgets["scanner_type"].currentText(),
+                "port": self.cfg_widgets["scanner_port"].text() or "COM3",
+                "baudrate": self.cfg_widgets["scanner_baud"].value(),
                 "scan_pattern": self.cfg_widgets["scan_pattern"].text() or None,
             },
             "compare": {
@@ -940,6 +1000,92 @@ class MainWindow(QWidget):
         self.stack.insertWidget(0, new_op)
         self.stack.removeWidget(operator)
 
+    def _exit_app(self) -> None:
+        if QMessageBox.question(self, "Exit application", "Close moreader? The line will no longer be gated.") \
+                != QMessageBox.Yes:
+            return
+        self._allow_close = True
+        self.close()
+
+    def _test_connections(self) -> None:
+        try:
+            cfg = self._gather_config()
+        except (ConfigError, ValueError) as exc:
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+        driver = "simulated" if self.simulate else cfg.plc.driver
+        self.test_btn.setEnabled(False)
+        self.test_btn.setText("Testing…")
+        self._test_queue = queue.Queue()
+
+        def work():
+            results = []
+            for enc_cfg in cfg.plc.encapsulators:
+                link = build_encapsulator(enc_cfg, driver)
+                try:
+                    link.connect()
+                    link.read_recipe()
+                    results.append((enc_cfg.name, True, "recipe read OK"))
+                except Exception as exc:  # noqa: BLE001 - report any failure
+                    results.append((enc_cfg.name, False, str(exc)))
+                finally:
+                    try:
+                        link.close()
+                    except Exception:
+                        pass
+            m = build_master(cfg.plc.master, driver)
+            try:
+                m.connect()
+                m.read_mo_verified()
+                results.append((cfg.plc.master.name, True, "MO_Verified read OK"))
+            except Exception as exc:  # noqa: BLE001
+                results.append((cfg.plc.master.name, False, str(exc)))
+            finally:
+                try:
+                    m.close()
+                except Exception:
+                    pass
+            self._test_queue.put(results)
+
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+        self._poll_test()
+
+    def _poll_test(self) -> None:
+        try:
+            results = self._test_queue.get_nowait()
+        except queue.Empty:
+            QTimer.singleShot(150, self._poll_test)
+            return
+        self.test_btn.setEnabled(True)
+        self.test_btn.setText("Test Connections")
+        lines = []
+        for name, ok, detail in results:
+            lines.append(f"{'✓' if ok else '✗'}  {name}: {detail}")
+        box = QMessageBox(self)
+        box.setWindowTitle("Connection test")
+        box.setText("\n".join(lines))
+        box.setIcon(QMessageBox.Information if all(ok for _, ok, _ in results) else QMessageBox.Warning)
+        box.setStyleSheet(STYLESHEET)
+        box.exec()
+
+    # -- scan source ----------------------------------------------------
+    def _open_scan_source(self) -> None:
+        self._close_scan_source()
+        self.scan_source = None
+        self.scan_source_error = ""
+        if self.config.scanner.type != "serial":
+            return
+        try:
+            self.scan_source = SerialScanSource(self.config.scanner.port, self.config.scanner.baudrate)
+        except ScannerError as exc:
+            self.scan_source_error = str(exc)
+
+    def _close_scan_source(self) -> None:
+        if self.scan_source is not None:
+            self.scan_source.close()
+            self.scan_source = None
+
     # -- worker plumbing ------------------------------------------------
     def _start_worker(self) -> None:
         self.events = queue.Queue()
@@ -949,6 +1095,7 @@ class MainWindow(QWidget):
     def _restart_worker(self) -> None:
         if self.worker is not None:
             self.worker.shutdown()
+        self._open_scan_source()
         self._start_worker()
 
     # -- event pump -----------------------------------------------------
@@ -999,18 +1146,25 @@ class MainWindow(QWidget):
 
     # -- lifecycle ------------------------------------------------------
     def closeEvent(self, event) -> None:
+        if not self._allow_close:
+            event.ignore()      # kiosk mode: only the password-gated Exit can close
+            return
         if self.worker is not None:
             self.worker.shutdown()
             self.worker.join(timeout=2.0)
+        self._close_scan_source()
         super().closeEvent(event)
 
 
-def launch(config: Config, config_path: Path, simulate: bool = False, **_ignored) -> None:
+def launch(config: Config, config_path: Path, simulate: bool = False, kiosk: bool = False, **_ignored) -> None:
     import sys
 
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv)
-    window = MainWindow(config, config_path, simulate=simulate)
-    window.show()
+    window = MainWindow(config, config_path, simulate=simulate, kiosk=kiosk)
+    if kiosk:
+        window.showFullScreen()
+    else:
+        window.show()
     app.exec()

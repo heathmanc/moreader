@@ -6,3 +6,6 @@ __pycache__/
 venv/
 config.yaml
 *.log
+
+# Audit logs
+logs/

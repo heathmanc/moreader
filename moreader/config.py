@@ -134,17 +134,29 @@ class PLCConfig:
 
 @dataclass
 class ScannerConfig:
-    """How the USB barcode scanner presents data."""
+    """How the USB barcode scanner presents data.
+
+    ``keyboard`` — HID keyboard-wedge (types into the scan popup).
+    ``serial``   — a virtual COM port (e.g. Zebra in USB-CDC mode); read via pyserial.
+    ``stdin``    — piped input, for testing/headless.
+    """
 
     type: str = "keyboard"
     scan_pattern: str | None = None
+    # Serial-only settings.
+    port: str = "COM3"
+    baudrate: int = 9600
 
     def __post_init__(self) -> None:
         self.type = str(self.type).lower()
         if self.type not in {"keyboard", "stdin", "serial"}:
-            raise ConfigError(f"scanner.type must be 'keyboard', 'stdin', or 'serial', got {self.type!r}")
+            raise ConfigError(f"scanner.type must be 'keyboard', 'serial', or 'stdin', got {self.type!r}")
         if self.scan_pattern in ("", "null", "None"):
             self.scan_pattern = None
+        try:
+            self.baudrate = int(self.baudrate)
+        except (TypeError, ValueError):
+            raise ConfigError(f"scanner.baudrate must be an integer, got {self.baudrate!r}")
 
 
 @dataclass
@@ -209,6 +221,14 @@ class SecondaryConfig:
 
 
 @dataclass
+class AuditConfig:
+    """Persistent audit trail of every scan and gate change."""
+
+    enabled: bool = True
+    directory: str = "logs"     # daily CSV files are written here
+
+
+@dataclass
 class Config:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     plc: PLCConfig = field(default_factory=PLCConfig)
@@ -216,6 +236,7 @@ class Config:
     compare: CompareConfig = field(default_factory=CompareConfig)
     shift: ShiftConfig = field(default_factory=ShiftConfig)
     secondary: SecondaryConfig = field(default_factory=SecondaryConfig)
+    audit: AuditConfig = field(default_factory=AuditConfig)
 
 
 # --- parsing -----------------------------------------------------------------
@@ -311,6 +332,7 @@ def from_dict(data: dict[str, Any]) -> Config:
         compare=_build(CompareConfig, _section(data, "compare")),
         shift=_build(ShiftConfig, _section(data, "shift")),
         secondary=_build(SecondaryConfig, _section(data, "secondary")),
+        audit=_build(AuditConfig, _section(data, "audit")),
     )
 
 
@@ -348,6 +370,7 @@ def to_dict(config: Config) -> dict[str, Any]:
         "compare": asdict(config.compare),
         "shift": asdict(config.shift),
         "secondary": asdict(config.secondary),
+        "audit": asdict(config.audit),
     }
 
 

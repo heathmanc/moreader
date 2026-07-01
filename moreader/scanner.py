@@ -116,6 +116,33 @@ class KeyboardWedgeScanner(BarcodeScanner):
             raise ScannerError(f"Could not read scanner input: {exc}") from exc
 
 
+class SerialScanner(BarcodeScanner):
+    """Reads a scanner on a virtual COM port (e.g. Zebra USB-CDC), headless mode."""
+
+    def __init__(self, cfg: ScannerConfig) -> None:
+        super().__init__(cfg)
+        try:
+            import serial
+        except ImportError as exc:  # pragma: no cover
+            raise ScannerError("pyserial is required for a serial scanner: pip install pyserial") from exc
+        try:
+            self._serial = serial.Serial(cfg.port, cfg.baudrate, timeout=None)
+        except Exception as exc:  # pragma: no cover - depends on hardware
+            raise ScannerError(f"Could not open serial port {cfg.port!r}: {exc}") from exc
+
+    def read_raw(self, prompt: str | None = None) -> str | None:
+        line = self._serial.readline()
+        if not line:
+            return None
+        return line.decode("ascii", errors="ignore")
+
+    def close(self) -> None:
+        try:
+            self._serial.close()
+        except Exception:  # pragma: no cover
+            pass
+
+
 class IterableScanner(BarcodeScanner):
     """Feeds scans from any iterable of strings.  Useful for tests/demos."""
 
@@ -130,7 +157,88 @@ class IterableScanner(BarcodeScanner):
             return None
 
 
+def split_scans(buffer: str) -> tuple[list[str], str]:
+    """Split a serial buffer into complete barcodes on CR/LF.
+
+    Returns ``(complete_barcodes, remainder)`` where ``remainder`` is any partial
+    barcode not yet terminated.
+    """
+
+    parts = re.split(r"[\r\n]+", buffer)
+    remainder = parts.pop()
+    return [p.strip() for p in parts if p.strip()], remainder
+
+
+class SerialScanSource:
+    """Background reader for a virtual-COM-port scanner, feeding the GUI.
+
+    A daemon thread reads the port continuously and splits complete barcodes on
+    CR/LF into a thread-safe queue.  The scan dialog flushes then polls it.
+    """
+
+    def __init__(self, port: str, baudrate: int) -> None:
+        import queue
+        import threading
+
+        try:
+            import serial
+        except ImportError as exc:  # pragma: no cover
+            raise ScannerError("pyserial is required for a serial scanner: pip install pyserial") from exc
+        try:
+            self._serial = serial.Serial(port, baudrate, timeout=0.2)
+        except Exception as exc:  # pragma: no cover - depends on hardware
+            raise ScannerError(f"Could not open serial port {port!r}: {exc}") from exc
+
+        self._queue: "queue.Queue[str]" = queue.Queue()
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="SerialScan", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        import time
+
+        buffer = ""
+        while self._running:
+            try:
+                data = self._serial.read(128)
+            except Exception:  # pragma: no cover - transient port error
+                time.sleep(0.3)
+                continue
+            if not data:
+                continue
+            buffer += data.decode("ascii", errors="ignore")
+            scans, buffer = split_scans(buffer)   # keep any partial trailing barcode
+            for scan in scans:
+                self._queue.put(scan)
+
+    def flush(self) -> None:
+        import queue
+
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+
+    def poll(self) -> str | None:
+        import queue
+
+        try:
+            return self._queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def close(self) -> None:
+        self._running = False
+        try:
+            self._serial.close()
+        except Exception:  # pragma: no cover
+            pass
+
+
 def build_scanner(cfg: ScannerConfig) -> BarcodeScanner:
-    if cfg.type in {"keyboard", "stdin", "serial"}:
+    if cfg.type == "serial":
+        return SerialScanner(cfg)
+    if cfg.type in {"keyboard", "stdin"}:
         return KeyboardWedgeScanner(cfg)
     raise ScannerError(f"Unknown scanner type: {cfg.type!r}")
