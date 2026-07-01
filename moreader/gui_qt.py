@@ -62,6 +62,13 @@ STATE = {
     "BYPASSED": ("#2a1a3a", "#a855f7", "MO BYPASSED"),
     "DISCONNECTED": ("#1a2533", "#5b6b7b", "OFFLINE"),
 }
+# Big status glyph shown on each encapsulator tile.
+STATE_GLYPH = {
+    "MATCH": "✓",
+    "MISMATCH": "✗",
+    "LOCKED": "…",
+    "DISCONNECTED": "–",
+}
 LOG_COLOR = {"ok": "#27c46b", "alarm": "#ef4444", "warn": "#eab308", "info": MUTED}
 
 STYLESHEET = f"""
@@ -73,13 +80,14 @@ QLabel#Clock {{ font-size: 18px; color: {TEXT}; font-weight: 600; }}
 QLabel#ConnSummary {{ font-size: 14px; font-weight: 600; }}
 QFrame#Tile, QFrame#Master {{ background: {PANEL}; border: 2px solid {EDGE}; border-radius: 12px; }}
 QLabel#TileName, QLabel#TileStatus, QLabel#Caption, QLabel#TileModel, QLabel#TileScan,
-QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal,
+QLabel#TileGlyph, QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal,
 QLabel#HeaderTitle, QLabel#HeaderSub, QLabel#Clock, QLabel#ConnSummary {{ background: transparent; }}
-QLabel#TileName {{ font-size: 19px; font-weight: 700; }}
-QLabel#TileStatus {{ font-size: 16px; font-weight: 700; }}
-QLabel#Caption {{ font-size: 12px; color: {MUTED}; }}
-QLabel#TileModel {{ font-size: 40px; font-weight: 800; }}
-QLabel#TileScan {{ font-size: 16px; font-weight: 600; color: {MUTED}; }}
+QLabel#TileName {{ font-size: 24px; font-weight: 800; }}
+QLabel#TileStatus {{ font-size: 26px; font-weight: 800; }}
+QLabel#TileGlyph {{ font-size: 96px; font-weight: 900; }}
+QLabel#Caption {{ font-size: 14px; color: {MUTED}; font-weight: 600; }}
+QLabel#TileModel {{ font-size: 68px; font-weight: 900; }}
+QLabel#TileScan {{ font-size: 30px; font-weight: 700; color: {TEXT}; }}
 QLabel#MasterName {{ font-size: 22px; font-weight: 800; }}
 QLabel#MasterStatus {{ font-size: 26px; font-weight: 800; }}
 QLabel#Heart {{ font-size: 22px; font-weight: 800; }}
@@ -133,45 +141,53 @@ class EncapsulatorTile(QFrame):
         super().__init__()
         self.setObjectName("Tile")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 16, 18, 16)
-        lay.setSpacing(6)
+        lay.setContentsMargins(20, 16, 20, 18)
+        lay.setSpacing(4)
 
-        top = QHBoxLayout()
         self.name_lbl = QLabel(name)
         self.name_lbl.setObjectName("TileName")
-        self.lamp = Lamp()
-        top.addWidget(self.name_lbl)
-        top.addStretch(1)
-        top.addWidget(self.lamp)
-        lay.addLayout(top)
+        self.name_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.name_lbl)
+
+        # Big pass/fail glyph.
+        self.glyph_lbl = QLabel("–")
+        self.glyph_lbl.setObjectName("TileGlyph")
+        self.glyph_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.glyph_lbl)
 
         self.status_lbl = QLabel("OFFLINE")
         self.status_lbl.setObjectName("TileStatus")
+        self.status_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.status_lbl)
 
-        lay.addSpacing(6)
+        lay.addSpacing(10)
         cap = QLabel("RECIPE (DINT)")
         cap.setObjectName("Caption")
+        cap.setAlignment(Qt.AlignCenter)
         lay.addWidget(cap)
         self.model_lbl = QLabel("—")
         self.model_lbl.setObjectName("TileModel")
+        self.model_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.model_lbl)
 
         lay.addStretch(1)
         scap = QLabel("LAST SCAN")
         scap.setObjectName("Caption")
+        scap.setAlignment(Qt.AlignCenter)
         lay.addWidget(scap)
         self.scan_lbl = QLabel("—")
         self.scan_lbl.setObjectName("TileScan")
+        self.scan_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.scan_lbl)
         self._apply("DISCONNECTED")
 
     def _apply(self, state: str) -> None:
         bg, accent, text = STATE.get(state, STATE["DISCONNECTED"])
-        self.setStyleSheet(f"QFrame#Tile {{ background: {bg}; border: 2px solid {accent}; border-radius: 12px; }}")
+        self.setStyleSheet(f"QFrame#Tile {{ background: {bg}; border: 3px solid {accent}; border-radius: 14px; }}")
         self.status_lbl.setText(text)
         self.status_lbl.setStyleSheet(f"color: {accent};")
-        self.lamp.set_color(accent)
+        self.glyph_lbl.setText(STATE_GLYPH.get(state, "–"))
+        self.glyph_lbl.setStyleSheet(f"color: {accent};")
 
     def update_from(self, data: dict) -> None:
         state = data.get("state", "DISCONNECTED")
