@@ -95,7 +95,21 @@ The same list is used for both the Stuffed Element and Assembled Battery scans.
 Each encapsulator's recipe tag can hold a **single number** or a
 **dash-separated list** when several products share a recipe, e.g.
 `1321-1333-8634-9121`. The scan matches that encapsulator if the scanned digits
-equal **any** value in the list.
+equal **any** value in the list. In the tiles the values are shown stacked
+(one per line, no dashes).
+
+### Continuous re-validation and assertive bypass
+
+While the line is verified, moreader re-checks the recipe against the scanned MO
+on **every tag pull** (~1×/sec). If a machine's model is changed on the PLC
+mid-run so it no longer matches, moreader immediately clears `MO_Verified`, locks
+out, shows a **"RECIPE CHANGED DURING RUN"** error, and records it. (It does not
+touch the cycle-stop bit — the PLC handles that.)
+
+`MO_Bypassed` is **assertive**: moreader re-writes it to its own value every
+poll, so setting the bypass bit directly in the PLC to skip verification is
+overwritten — only the passworded BYPASS button turns it on. If a scan verifies
+while bypass is on, moreader sets `MO_Verified` and clears `MO_Bypassed`.
 
 ### Optional Assembled-Battery cross-check
 

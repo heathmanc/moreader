@@ -181,6 +181,15 @@ class MasterMonitor:
             self.mo_bypassed = bypassed
             self._recompute()
 
+    def reassert_bypass(self) -> None:
+        """Re-write MO_Bypassed to moreader's authoritative value.
+
+        Called every poll so a bypass set directly in the PLC (to skip
+        verification) is overwritten — only the passworded button turns it on.
+        """
+        with self._lock:
+            self.link.set_mo_bypassed(self.mo_bypassed)
+
     def set_cycle_stop(self, requested: bool) -> None:
         if not self.cycle_stop_enabled:
             return   # the PLC owns CycleStopReq; moreader stays out of it

@@ -13,6 +13,7 @@ master, tag names + descriptions), Scanner, Compare, Shift, and Security.
 from __future__ import annotations
 
 import queue
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -199,10 +200,15 @@ class EncapsulatorTile(QFrame):
             state = "DISCONNECTED"
         self.name_lbl.setText(data.get("name", self.name_lbl.text()))
         recipe = data.get("recipe")
-        text = "—" if recipe in (None, "") else str(recipe)
-        self.model_lbl.setText(text)
-        # A single number stays huge; a dash-separated list shrinks so it fits.
-        size = 68 if len(text) <= 6 else (34 if len(text) <= 14 else 24)
+        # Show each recipe number on its own line (stacked, no dashes).
+        tokens = [t for t in re.split(r"\D+", str(recipe))
+                  if t] if recipe not in (None, "") else []
+        if not tokens:
+            self.model_lbl.setText("—")
+            size = 68
+        else:
+            self.model_lbl.setText("\n".join(tokens))
+            size = {1: 68, 2: 48, 3: 38}.get(len(tokens), 30)   # 4+ -> 30
         self.model_lbl.setStyleSheet(f"font-size: {size}px; font-weight: 900; background: transparent;")
         scanned = data.get("scanned")
         self.scan_lbl.setText("—" if scanned is None else str(scanned))

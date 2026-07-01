@@ -78,6 +78,7 @@ class PLCWorker(threading.Thread):
         self._offline: set[str] = set()   # names currently logged as offline (throttle)
         self.battery_scanned: int | None = None
         self.battery_matched: bool | None = None
+        self.verified_number: str | None = None   # the scan that granted the current verify
 
     # -- public API -----------------------------------------------------
     def submit(self, command: str, value: str | None = None) -> None:
@@ -226,6 +227,7 @@ class PLCWorker(threading.Thread):
 
     def _lockout(self, cycle_stop: bool = False) -> None:
         self._reset_battery()
+        self.verified_number = None
         for enc in self.encapsulators:
             if enc.connected:
                 enc.lock()
@@ -258,6 +260,7 @@ class PLCWorker(threading.Thread):
     def _reject(self, title: str, reasons: list[str], stuffed=None, assembled=None, battery=None) -> None:
         """Block the master, log the reasons, and pop an error screen in the GUI."""
 
+        self.verified_number = None
         for r in reasons:
             self.notifier._log("alarm", r)
         self.events.put({"type": "error", "title": title, "reasons": reasons})
@@ -356,10 +359,16 @@ class PLCWorker(threading.Thread):
             return
 
         # --- success ---
+        self.verified_number = number
         if self.master and self.master.connected:
             try:
                 self.master.set_verified(True)
                 self.master.set_cycle_stop(False)   # release the graceful stop
+                if self.master.mo_bypassed:
+                    # A real verify supersedes an operator bypass.
+                    self.master.set_bypassed(False)
+                    self.notifier._log("info", "Bypass cleared — MO is now verified.")
+                    self.audit.record("BYPASS", "OFF", detail="cleared by verification")
             except PLCError as exc:
                 self._fail_master(exc)
         self.audit.record("VERIFY", "PASS", stuffed_mo=number,
@@ -376,6 +385,14 @@ class PLCWorker(threading.Thread):
             self._connect_master()
 
         # (The heartbeat runs on its own thread — see _heartbeat_loop.)
+
+        # Assertive bypass: overwrite MO_Bypassed with our value each poll so a
+        # bypass set directly in the PLC (to skip verification) is cleared.
+        if self.master and self.master.connected:
+            try:
+                self.master.reassert_bypass()
+            except PLCError as exc:
+                self._fail_master(exc)
 
         # Changeover: the PLC cleared MO_Verified on its own -> require a re-scan.
         if self.master and self.master.connected and self.master.mo_verified:
@@ -398,7 +415,14 @@ class PLCWorker(threading.Thread):
             self._emit_status()
             return
 
-        # Refresh recipe setpoints for display.
+        # While verified (and not bypassed), re-validate the recipe on every pull
+        # so a machine model changed mid-run is caught immediately.
+        if (self.master and self.master.connected and self.master.mo_verified
+                and not self.master.mo_bypassed and self.verified_number):
+            self._revalidate_recipes()
+            return
+
+        # Otherwise just refresh the recipe setpoints for display.
         changed = False
         for enc in self.encapsulators:
             if not enc.connected:
@@ -412,6 +436,31 @@ class PLCWorker(threading.Thread):
                 changed = True
         if changed:
             self._emit_status()
+
+    def _revalidate_recipes(self) -> None:
+        """Re-check the verified scan against each encapsulator's live recipe."""
+
+        number = self.verified_number
+        drifted = []   # (name, recipe) for encapsulators that no longer match
+        for enc in self.encapsulators:
+            if not enc.connected:
+                continue
+            try:
+                if not enc.evaluate(number, len(number)):
+                    drifted.append((enc.name, enc.recipe))
+            except PLCError as exc:
+                self._fail_enc(enc, exc)
+                drifted.append((enc.name, "read error"))
+        if drifted:
+            reasons = [f"{name}: recipe is now {recipe}, which no longer matches the verified MO {number}."
+                       for name, recipe in drifted]
+            reasons.append("The line was locked out. Scan the correct MO to run again.")
+            self.notifier._log("alarm", f"Recipe changed during the run — {self.master.name} blocked.")
+            self.audit.record("RECIPE_CHANGED", "BLOCK", stuffed_mo=number,
+                              detail="; ".join(f"{n}={r}" for n, r in drifted))
+            self.events.put({"type": "error", "title": "RECIPE CHANGED DURING RUN", "reasons": reasons})
+            self._lockout(cycle_stop=False)   # the PLC handles the cycle stop
+        self._emit_status()
 
     def _fail_enc(self, enc: EncapsulatorMonitor, exc: Exception) -> None:
         enc.mark_disconnected()

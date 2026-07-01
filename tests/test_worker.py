@@ -133,6 +133,46 @@ def test_bypass_sets_master_bit():
     assert worker.master.state is State.BYPASSED
 
 
+def test_recipe_change_mid_run_blocks_and_requires_rescan():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker._handle(CMD_VERIFY, MO_1001)              # verified on 1001
+    assert worker.master.mo_verified is True
+    assert worker.verified_number == "1001"
+    # Someone changes Encapsulator 2's model on the PLC mid-run.
+    worker.encapsulators[1].link.set_recipe(2002)
+    worker._housekeeping()                            # re-validates on the pull
+    assert worker.master.mo_verified is False         # line blocked
+    assert worker.verified_number is None
+    errs = errors(worker)
+    assert errs and errs[0]["title"] == "RECIPE CHANGED DURING RUN"
+    assert any("Encapsulator 2" in r for r in errs[0]["reasons"])
+
+
+def test_recipe_stays_valid_when_unchanged():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker._handle(CMD_VERIFY, MO_1001)
+    worker._housekeeping()                            # nothing changed
+    assert worker.master.mo_verified is True
+
+
+def test_assertive_bypass_overwrites_plc_set_bit():
+    worker = make_worker()
+    # moreader believes bypass is OFF; someone sets it ON in the PLC.
+    worker.master.link.mo_bypassed = True
+    worker._housekeeping()
+    assert worker.master.link.mo_bypassed is False    # moreader overwrote it
+
+
+def test_verify_while_bypassed_sets_verified_and_clears_bypass():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker._handle(CMD_BYPASS, "on")
+    assert worker.master.mo_bypassed is True
+    worker._handle(CMD_VERIFY, MO_1001)
+    assert worker.master.mo_verified is True
+    assert worker.master.mo_bypassed is False
+    assert worker.master.link.mo_bypassed is False
+
+
 def test_bypass_cleared_by_lockout():
     worker = make_worker()
     worker._handle(CMD_BYPASS, "on")
