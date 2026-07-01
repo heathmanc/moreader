@@ -151,29 +151,43 @@ bullet("Purple “MO BYPASSED” means a supervisor turned on bypass.")
 
 # ---------------------------------------------------------------- 4
 heading("4. How to Scan a Manufacturing Order", 1)
-para("Follow these steps at the start of your shift, or any time the screen says "
+para("Do this at the start of your shift, or any time the screen says "
      "“LOCKED — SCAN MO.”")
-step("Press the blue VERIFY MO button.")
-step("A pop-up window opens. It says “SCAN MANUFACTURING ORDER.”")
-step("Scan the MO barcode with the scanner. The numbers show in the box.")
-step("Press OK. (Some scanners do this for you.)")
-picture("04_scan_popup.png", "Figure 3. The scan pop-up. Scan the MO here.", 5.2)
-para("You do not type the number by hand. Just scan it.", bold=True)
-para("If the scan is good, the boxes turn green and the master box says "
+para("Your line uses three scans. You do them in order. A pop-up opens and "
+     "guides you. It shows which step you are on, like “Step 1 of 3.”")
+para("To start, press the blue VERIFY MO button.", bold=True)
+para("You never type a number by hand. You only scan.")
+
+heading("Step 1: Scan the Stuffed Element MO", 2)
+para("Scan the Stuffed Element MO barcode. In this example it is 2220-1321. "
+     "The system uses the last 4 numbers (1321) to check each machine.")
+picture("08_scan_step1.png", "Figure 3. Step 1 of 3 — scan the Stuffed Element MO (2220-1321).")
+
+heading("Step 2: Scan the Assembled Battery MO", 2)
+para("Next, scan the Assembled Battery MO barcode. In this example it is "
+     "2220-1964. This is a different order than Step 1.")
+picture("09_scan_step2.png", "Figure 4. Step 2 of 3 — scan the Assembled Battery MO (2220-1964).")
+
+heading("Step 3: Scan the Battery Label", 2)
+para("Last, scan the battery label barcode. In this example it is "
+     "1964W1261820308. The first 4 numbers (1964) must match the Assembled "
+     "Battery MO from Step 2.")
+picture("10_scan_step3.png", "Figure 5. Step 3 of 3 — scan the battery label (1964W1261820308).")
+
+heading("When You Are Done", 2)
+para("After the last scan, press OK. Some scanners do this for you.")
+para("If everything matches, the machine boxes turn green. The master box says "
      "“MO VERIFIED.” The line can now run.")
-picture("02_main_verified.png", "Figure 4. A good scan. All boxes are green.")
-para("If your line uses a battery label:", bold=True)
-para("Some lines need two more scans. The pop-up will guide you step by step:")
-step("Scan the Stuffed Element MO.")
-step("Scan the Assembled Battery MO.")
-step("Scan the battery label.")
-para("The battery label must match the Assembled Battery MO. The pop-up tells you "
-     "which step you are on (for example, “Step 2 of 3”).")
+picture("02_main_verified.png", "Figure 6. All three scans passed. The line is ready.")
+para("Remember:", bold=True)
+bullet("Scan in order: Stuffed Element, then Assembled Battery, then battery label.")
+bullet("You only scan. You do not type any number.")
+bullet("If any scan does not match, a red screen tells you what is wrong. See Section 5.")
 
 # ---------------------------------------------------------------- 5
 heading("5. When a Scan Does Not Pass", 1)
 para("If a scan does not pass, a red screen pops up. It tells you what is wrong.")
-picture("05_error_screen.png", "Figure 5. The error screen shows the reason.", 5.5)
+picture("05_error_screen.png", "Figure 7. The error screen shows the reason.", 5.5)
 para("What to do:", bold=True)
 step("Read the reason on the red screen.")
 step("Press OK.")
@@ -189,9 +203,9 @@ para("Bypass lets the line run without a matching scan. It is for supervisors "
 step("Press the purple BYPASS button.")
 step("A box asks for a password.")
 step("Type the password and press OK.")
-picture("06_bypass_password.png", "Figure 6. Bypass asks for a password.", 4.6)
+picture("06_bypass_password.png", "Figure 8. Bypass asks for a password.", 4.6)
 para("When bypass is on, the master box turns purple and says “MO BYPASSED.”")
-picture("07_bypass_active.png", "Figure 7. Bypass is on. The master box is purple.")
+picture("07_bypass_active.png", "Figure 9. Bypass is on. The master box is purple.")
 para("Important:", bold=True, color=RED)
 bullet("Bypass turns off by itself at a shift change.")
 bullet("Bypass also turns off when someone presses MANUAL LOCKOUT.")
