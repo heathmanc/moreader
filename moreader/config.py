@@ -92,6 +92,8 @@ class MasterConfig:
     mo_bypassed_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["mo_bypassed_tag"]))
     cycle_stop_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["cycle_stop_tag"]))
     heartbeat_tag: TagSpec = field(default_factory=lambda: TagSpec(*MASTER_TAG_DEFAULTS["heartbeat_tag"]))
+    # When False, moreader never writes CycleStopReq (the PLC handles it).
+    cycle_stop_enabled: bool = True
 
     def __post_init__(self) -> None:
         try:
@@ -301,6 +303,7 @@ def _master_from_dict(data: dict[str, Any]) -> MasterConfig:
         name=data.get("name", defaults.name),
         ip_address=data.get("ip_address", defaults.ip_address),
         slot=data.get("slot", defaults.slot),
+        cycle_stop_enabled=bool(data.get("cycle_stop_enabled", defaults.cycle_stop_enabled)),
         **tag_kwargs,
     )
 
@@ -350,6 +353,7 @@ def _master_to_dict(m: MasterConfig) -> dict[str, Any]:
         "name": m.name,
         "ip_address": m.ip_address,
         "slot": m.slot,
+        "cycle_stop_enabled": m.cycle_stop_enabled,
         "tags": {
             attr: {"name": m.tag(attr).name, "description": m.tag(attr).description}
             for attr in MASTER_TAG_ATTRS

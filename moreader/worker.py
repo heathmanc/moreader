@@ -113,6 +113,7 @@ class PLCWorker(threading.Thread):
             link = build_encapsulator(enc_cfg, driver, sim_recipe=recipe)
             self.encapsulators.append(EncapsulatorMonitor(link))
         self.master = MasterMonitor(build_master(self.config.plc.master, driver))
+        self.master.cycle_stop_enabled = self.config.plc.master.cycle_stop_enabled
 
     def _connect_all(self) -> None:
         for enc in self.encapsulators:

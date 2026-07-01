@@ -94,6 +94,19 @@ def test_verify_clears_cycle_stop():
     assert worker.master.cycle_stop is False
 
 
+def test_cycle_stop_disabled_never_writes():
+    cfg = Config()
+    cfg.shift.start_times = []
+    cfg.plc.master.cycle_stop_enabled = False
+    worker = PLCWorker(cfg, simulate=True, sim_recipes=[1001, 1001, 1001], events=queue.Queue())
+    worker._build()
+    worker._connect_all()
+    assert worker.master.cycle_stop_enabled is False
+    worker._handle(CMD_LOCKOUT, None)          # would normally request a cycle stop
+    assert worker.master.cycle_stop is False   # local state untouched
+    assert worker.master.link.cycle_stop is False  # PLC tag never written
+
+
 def test_leading_zeros_preserved_in_match_and_log():
     worker = make_worker(recipes=(42, 42, 42))
     worker._handle(CMD_VERIFY, "000000042")        # 9 chars, last 4 = "0042"

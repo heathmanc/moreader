@@ -112,6 +112,7 @@ class MasterMonitor:
         self.mo_verified = False
         self.mo_bypassed = False
         self.cycle_stop = False
+        self.cycle_stop_enabled = True   # when False, moreader never writes CycleStopReq
         self.heartbeat = 0
         self.connected = False
 
@@ -125,7 +126,8 @@ class MasterMonitor:
         # Start safe: nothing verified, bypassed, or requesting a cycle stop.
         self.link.set_mo_verified(False)
         self.link.set_mo_bypassed(False)
-        self.link.set_cycle_stop(False)
+        if self.cycle_stop_enabled:
+            self.link.set_cycle_stop(False)
         self.mo_verified = False
         self.mo_bypassed = False
         self.cycle_stop = False
@@ -165,6 +167,8 @@ class MasterMonitor:
         self._recompute()
 
     def set_cycle_stop(self, requested: bool) -> None:
+        if not self.cycle_stop_enabled:
+            return   # the PLC owns CycleStopReq; moreader stays out of it
         self.link.set_cycle_stop(requested)
         self.cycle_stop = requested
 

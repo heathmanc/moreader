@@ -738,7 +738,20 @@ class MainWindow(QWidget):
         hn = QLabel("Tag name"); hn.setObjectName("Caption"); mgrid.addWidget(hn, 1, 1)
         hd = QLabel("Description"); hd.setObjectName("Caption"); mgrid.addWidget(hd, 1, 2)
         for i, (attr, label, _n, _d) in enumerate(MASTER_TAGS):
-            self._tag_row(mgrid, 2 + i, label, attr, mw["tags"])
+            row = 2 + i
+            if attr == "cycle_stop_tag":
+                mgrid.addWidget(QLabel(label), row, 0)
+                name_edit, desc_edit = QLineEdit(), QLineEdit()
+                mgrid.addWidget(name_edit, row, 1)
+                self.cfg_widgets["cycle_stop_enabled"] = QCheckBox("moreader writes this")
+                self.cfg_widgets["cycle_stop_enabled"].setToolTip(
+                    "Uncheck to let the PLC handle the cycle-stop request; moreader will not write this tag."
+                )
+                mgrid.addWidget(self.cfg_widgets["cycle_stop_enabled"], row, 2)
+                mgrid.addWidget(desc_edit, row, 3, 1, 2)
+                mw["tags"][attr] = (name_edit, desc_edit)
+            else:
+                self._tag_row(mgrid, row, label, attr, mw["tags"])
         mgrid.addWidget(QLabel("Heartbeat interval (s)"), 2 + len(MASTER_TAGS), 0)
         self.cfg_widgets["heartbeat_interval"] = QDoubleSpinBox()
         self.cfg_widgets["heartbeat_interval"].setRange(0.1, 60.0)
@@ -898,6 +911,7 @@ class MainWindow(QWidget):
             name_edit, desc_edit = mw["tags"][attr]
             name_edit.setText(spec.name)
             desc_edit.setText(spec.description)
+        self.cfg_widgets["cycle_stop_enabled"].setChecked(m.cycle_stop_enabled)
         self.cfg_widgets["heartbeat_interval"].setValue(c.plc.heartbeat_interval)
         self.cfg_widgets["scanner_type"].setCurrentText(c.scanner.type)
         self.cfg_widgets["scanner_port"].setText(c.scanner.port)
@@ -936,6 +950,7 @@ class MainWindow(QWidget):
             "name": mw["name"].text(),
             "ip_address": mw["ip"].text(),
             "slot": mw["slot"].value(),
+            "cycle_stop_enabled": self.cfg_widgets["cycle_stop_enabled"].isChecked(),
             "tags": {
                 attr: {"name": ne.text(), "description": de.text()}
                 for attr, (ne, de) in mw["tags"].items()

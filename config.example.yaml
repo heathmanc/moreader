@@ -38,6 +38,7 @@ plc:
     name: COS
     ip_address: 192.168.1.10
     slot: 0
+    cycle_stop_enabled: true   # uncheck/false to let the PLC handle CycleStopReq (moreader won't write it)
     tags:
       mo_verified_tag:
         name: MO_Verified
