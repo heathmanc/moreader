@@ -42,6 +42,12 @@ its name and description, plus the heartbeat interval), **Scanner**, **Compare**
 (trailing-digit rule), **Shift**, and **Security**. **Save & Apply** writes the
 YAML and reconnects.
 
+When a scan is rejected, a red **error screen** pops up naming the exact
+reason(s) — wrong scan length, an encapsulator whose recipe doesn't match, a
+battery label that doesn't match the Assembled Battery MO, an unreadable
+barcode, or an offline PLC — so the operator knows what to fix before scanning
+again.
+
 All PLC I/O runs on a background thread, so a slow or offline PLC never freezes
 the interface.
 

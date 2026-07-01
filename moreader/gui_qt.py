@@ -382,6 +382,58 @@ class ScanDialog(QDialog):
         return dict(self.values)
 
 
+class ScanErrorDialog(QDialog):
+    """Full-screen-style red error screen shown when a scan fails."""
+
+    def __init__(self, title: str, reasons: list[str], parent=None) -> None:
+        super().__init__(parent)
+        red = STATE["MISMATCH"][1]
+        self.setWindowTitle("Scan Failed")
+        self.setModal(True)
+        self.setMinimumWidth(640)
+        self.setStyleSheet(STYLESHEET + f"QDialog {{ border: 3px solid {red}; }}")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(36, 30, 36, 30)
+        lay.setSpacing(16)
+
+        banner = QLabel(f"✕  {title}")
+        banner.setAlignment(Qt.AlignCenter)
+        banner.setStyleSheet(f"color: {red}; font-size: 28px; font-weight: 800;")
+        lay.addWidget(banner)
+
+        sub = QLabel("The scan was rejected. The line was NOT enabled.")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet(f"color: {MUTED};")
+        lay.addWidget(sub)
+
+        box = QFrame()
+        box.setStyleSheet(f"background: #3a1414; border: 1px solid {red}; border-radius: 8px;")
+        box_lay = QVBoxLayout(box)
+        box_lay.setContentsMargins(18, 14, 18, 14)
+        box_lay.setSpacing(8)
+        for reason in reasons or ["Verification failed."]:
+            row = QLabel(f"•  {reason}")
+            row.setWordWrap(True)
+            row.setStyleSheet(f"color: {TEXT}; font-size: 16px; background: transparent;")
+            box_lay.addWidget(row)
+        lay.addWidget(box)
+
+        hint = QLabel("Press OK, correct the problem, and scan again.")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(f"color: {MUTED};")
+        lay.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        ok = QPushButton("OK")
+        ok.setObjectName("Primary")
+        ok.setMinimumWidth(140)
+        ok.clicked.connect(self.accept)
+        row.addWidget(ok)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+
 class MainWindow(QWidget):
     def __init__(self, config: Config, config_path: Path, simulate: bool = False) -> None:
         super().__init__()
@@ -399,6 +451,7 @@ class MainWindow(QWidget):
         self.cfg_widgets: dict = {}
         self.config_index = None
         self._master_bypassed = False
+        self._error_open = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -900,16 +953,27 @@ class MainWindow(QWidget):
 
     # -- event pump -----------------------------------------------------
     def _drain_events(self) -> None:
+        if self._error_open:      # don't process more while an error screen is up
+            return
         try:
             while True:
                 self._handle_event(self.events.get_nowait())
         except queue.Empty:
             pass
 
+    def _show_error(self, title: str, reasons: list) -> None:
+        self._error_open = True
+        try:
+            ScanErrorDialog(title, reasons, self).exec()
+        finally:
+            self._error_open = False
+
     def _handle_event(self, event: dict) -> None:
         etype = event.get("type")
         if etype == "log":
             self._append_log(event.get("level", "info"), event.get("text", ""))
+        elif etype == "error":
+            self._show_error(event.get("title", "SCAN FAILED"), event.get("reasons", []))
         elif etype == "status":
             encs = event.get("encapsulators", [])
             for tile, data in zip(self.tiles, encs):

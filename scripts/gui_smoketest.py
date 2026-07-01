@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PySide6.QtWidgets import QApplication
 
 from moreader.config import Config
-from moreader.gui_qt import MainWindow, ScanDialog
+from moreader.gui_qt import MainWindow, ScanDialog, ScanErrorDialog
 from moreader.worker import CMD_BYPASS, CMD_VERIFY
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/mo"
@@ -70,6 +70,21 @@ def main():
     dlg.grab().save(f"{OUT}_scan_dialog.png")
     print("wrote", f"{OUT}_scan_dialog.png")
     dlg.close()
+
+    # Error screen (rendered directly).
+    err = ScanErrorDialog(
+        "SCAN VERIFICATION FAILED",
+        [
+            "Encapsulator 3: set to recipe 2002, but the MO ends in 1001.",
+            "Battery label starts with 9999, but the Assembled Battery MO ends in 1001.",
+        ],
+        win,
+    )
+    err.show()
+    QApplication.processEvents()
+    err.grab().save(f"{OUT}_error.png")
+    print("wrote", f"{OUT}_error.png")
+    err.close()
 
     win.config_page = win._build_config_page()
     win.config_index = win.stack.addWidget(win.config_page)

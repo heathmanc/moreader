@@ -189,12 +189,25 @@ def test_bypass_cleared_by_shift_change():
     assert worker.master.mo_bypassed is False
 
 
-def test_invalid_scan_logs_alarm_and_no_verify():
+def errors(worker):
+    return [e for e in drain(worker) if e["type"] == "error"]
+
+
+def test_invalid_scan_emits_error_screen():
     worker = make_worker()
     worker._handle(CMD_VERIFY, "NODIGITSX")     # 9 chars (passes length) but no number
     assert worker.master.mo_verified is False
-    texts = [e.get("text", "") for e in drain(worker) if e["type"] == "log"]
-    assert any("Invalid MO scan" in t for t in texts)
+    errs = errors(worker)
+    assert errs and errs[0]["title"] == "STUFFED ELEMENT MO SCAN FAILED"
+    assert any("No number could be read" in r for r in errs[0]["reasons"])
+
+
+def test_mismatch_error_screen_lists_reason():
+    worker = make_worker(recipes=(1001, 1001, 2002))
+    worker._handle(CMD_VERIFY, MO_1001)
+    errs = errors(worker)
+    assert errs and errs[0]["title"] == "SCAN VERIFICATION FAILED"
+    assert any("Encapsulator 3" in r and "2002" in r for r in errs[0]["reasons"])
 
 
 def test_heartbeat_written_during_housekeeping():

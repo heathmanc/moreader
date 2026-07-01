@@ -179,16 +179,6 @@ class PLCWorker(threading.Thread):
             except PLCError as exc:
                 self._fail_master(exc)
 
-    def _fail_verification(self) -> None:
-        """A scan was rejected: ensure the master stays blocked, then update the UI."""
-
-        if self.master and self.master.connected and self.master.mo_verified:
-            try:
-                self.master.set_verified(False)
-            except PLCError as exc:
-                self._fail_master(exc)
-        self._emit_status()
-
     def _bypass(self, on: bool) -> None:
         if not (self.master and self.master.connected):
             self.notifier._log("alarm", "Cannot bypass — master not connected.")
@@ -204,6 +194,19 @@ class PLCWorker(threading.Thread):
             self.notifier._log("warn", f"MO BYPASS ENABLED by operator — {self.master.name} may run without a verified scan.")
         else:
             self.notifier._log("info", "MO bypass cleared.")
+
+    def _reject(self, title: str, reasons: list[str]) -> None:
+        """Block the master, log the reasons, and pop an error screen in the GUI."""
+
+        for r in reasons:
+            self.notifier._log("alarm", r)
+        self.events.put({"type": "error", "title": title, "reasons": reasons})
+        if self.master and self.master.connected and self.master.mo_verified:
+            try:
+                self.master.set_verified(False)
+            except PLCError as exc:
+                self._fail_master(exc)
+        self._emit_status()
 
     def _verify(self, payload) -> None:
         # payload is either the raw stuffed-element MO string, or a dict with
@@ -222,88 +225,84 @@ class PLCWorker(threading.Thread):
         mo_text = (raw_mo or "").strip("\r\n").strip()
         mo_len = self.config.compare.mo_length
         if mo_len and len(mo_text) != mo_len:
-            self.notifier._log("alarm", f"Stuffed Element MO must be {mo_len} characters (got {len(mo_text)}) — blocked.")
-            self._fail_verification()
+            self._reject("STUFFED ELEMENT MO SCAN FAILED",
+                         [f"MO must be {mo_len} characters — you scanned {len(mo_text)}.",
+                          "Make sure you scanned the Stuffed Element MO, not another label."])
             return
 
         number = extract_mo_digits(raw_mo, self.config.scanner, self.config.compare)
         if number is None:
-            self.notifier._log("alarm", f"Invalid MO scan {raw_mo!r}: no digits could be read.")
-            self._fail_verification()
+            self._reject("STUFFED ELEMENT MO SCAN FAILED",
+                         [f"No number could be read from the scan {raw_mo!r}."])
             return
         self.notifier._log("info", f"Stuffed Element MO {number} → comparing to each encapsulator recipe.")
 
         connected = [e for e in self.encapsulators if e.connected]
         all_present = len(connected) == len(self.encapsulators)
-        all_matched = all_present
         last_n = self.config.compare.mo_last_digits
+        reasons: list[str] = []
+        if not all_present:
+            offline = [e.name for e in self.encapsulators if not e.connected]
+            reasons.append("Not all encapsulators are online: " + ", ".join(offline) + ".")
         for enc in connected:
             try:
                 matched = enc.evaluate(number, last_n)
             except PLCError as exc:
                 self._fail_enc(enc, exc)
-                all_matched = False
+                reasons.append(f"{enc.name}: PLC read error.")
                 continue
             if matched:
                 self.notifier._log("ok", f"{enc.name}: recipe {enc.recipe} matches {number}.")
             else:
                 self.notifier._log("alarm", f"{enc.name}: recipe {enc.recipe} ≠ {number}.")
-            all_matched = all_matched and matched
-
-        if not all_present:
-            self.notifier._log("alarm", "Not all encapsulators are connected — cannot verify.")
+                reasons.append(f"{enc.name}: set to recipe {enc.recipe}, but the MO ends in {number}.")
 
         # --- Assembled Battery MO vs battery label (optional) ---
-        battery_ok = True
         if self.config.secondary.enabled:
             sec = self.config.secondary
             assembled_text = (raw_assembled or "").strip("\r\n").strip()
             battery_text = (raw_battery or "").strip("\r\n").strip()
             if sec.assembled_mo_length and len(assembled_text) != sec.assembled_mo_length:
-                self.notifier._log(
-                    "alarm",
-                    f"Assembled Battery MO must be {sec.assembled_mo_length} characters "
-                    f"(got {len(assembled_text)}) — blocked.",
-                )
                 self._reset_battery()
-                self._fail_verification()
+                self._reject("ASSEMBLED BATTERY MO SCAN FAILED",
+                             [f"Assembled Battery MO must be {sec.assembled_mo_length} characters — "
+                              f"you scanned {len(assembled_text)}.",
+                              "Make sure you scanned the Assembled Battery MO."])
                 return
             if sec.battery_min_length and len(battery_text) < sec.battery_min_length:
-                self.notifier._log(
-                    "alarm",
-                    f"Battery label must be at least {sec.battery_min_length} characters "
-                    f"(got {len(battery_text)}) — blocked.",
-                )
                 self._reset_battery()
-                self._fail_verification()
+                self._reject("BATTERY LABEL SCAN FAILED",
+                             [f"Battery label must be at least {sec.battery_min_length} characters — "
+                              f"you scanned {len(battery_text)}.",
+                              "Make sure you scanned the battery label, not the MO."])
                 return
             assembled_digits = extract_last_digits(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
             self.battery_scanned = extract_battery_digits(battery_text, self.config.scanner, sec.battery_first_digits)
-            battery_ok = (
+            self.battery_matched = (
                 assembled_digits is not None
                 and self.battery_scanned is not None
                 and assembled_digits == self.battery_scanned
             )
             if assembled_digits is None or self.battery_scanned is None:
-                self.notifier._log("alarm", "Assembled Battery MO or battery label unreadable — blocked.")
-            elif battery_ok:
+                reasons.append("Could not read a number from the Assembled Battery MO or the battery label.")
+            elif self.battery_matched:
                 self.notifier._log("ok", f"Battery label {self.battery_scanned} matches Assembled MO {assembled_digits}.")
             else:
-                self.notifier._log("alarm", f"Battery label {self.battery_scanned} ≠ Assembled MO {assembled_digits}.")
-            self.battery_matched = battery_ok
+                reasons.append(f"Battery label starts with {self.battery_scanned}, "
+                               f"but the Assembled Battery MO ends in {assembled_digits}.")
 
-        verified = all_matched and battery_ok
+        if reasons:
+            self._reject("SCAN VERIFICATION FAILED", reasons)
+            return
+
+        # --- success ---
         if self.master and self.master.connected:
             try:
-                self.master.set_verified(verified)
-                if verified:
-                    self.master.set_cycle_stop(False)   # release the graceful stop
+                self.master.set_verified(True)
+                self.master.set_cycle_stop(False)   # release the graceful stop
             except PLCError as exc:
                 self._fail_master(exc)
-        if verified:
-            self.notifier._log("ok", f"MO {number} VERIFIED — {self.master.name} may run.")
-        else:
-            self.notifier._log("alarm", f"MO {number} NOT verified — {self.master.name} blocked.")
+        self.notifier._log("ok", f"MO {number} VERIFIED — {self.master.name} may run.")
         self._emit_status()
 
     def _housekeeping(self) -> None:
