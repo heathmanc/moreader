@@ -9,7 +9,10 @@ security:
 plc:
   # driver: "logix" (pylogix -> CompactLogix/ControlLogix) or "simulated" (no hardware)
   driver: logix
-  heartbeat_interval: 1.0       # seconds between heartbeat writes to the master
+  heartbeat_interval: 1.0       # seconds between heartbeat pulses to the master
+  # heartbeat_mode: "toggle" pulses a BOOL ON/OFF (classic watchdog) or
+  #                 "increment" counts up a DINT. Use toggle for a BOOL tag.
+  heartbeat_mode: toggle
 
   # Three read-only encapsulator PLCs. moreader reads only the recipe DINT.
   encapsulators:
@@ -51,7 +54,7 @@ plc:
         description: BOOL the program SETS true on a lockout/shift change to request a graceful cycle stop
       heartbeat_tag:
         name: Heartbeat
-        description: DINT the program increments so the master PLC knows the app is alive
+        description: Watchdog the program pulses (BOOL toggle or DINT count) so the PLC knows the app is alive
 
 scanner:
   # type: "keyboard" (HID keyboard-wedge -> types into the scan popup),

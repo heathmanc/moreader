@@ -52,7 +52,7 @@ MASTER_TAGS: list[tuple[str, str, str, str]] = [
     ("cycle_stop_tag", "Cycle Stop Request", "System.Mode.CycleStopReq",
      "BOOL the program SETS true on a lockout/shift change to request a graceful cycle stop"),
     ("heartbeat_tag", "Heartbeat", "Heartbeat",
-     "DINT the program increments so the master PLC knows the app is alive"),
+     "Watchdog the program pulses so the master PLC knows the app is alive (BOOL toggle or DINT count)"),
 ]
 MASTER_TAG_ATTRS = [t[0] for t in MASTER_TAGS]
 MASTER_TAG_DEFAULTS = {attr: (name, desc) for attr, _label, name, desc in MASTER_TAGS}
@@ -121,6 +121,9 @@ class PLCConfig:
     encapsulators: list[EncapsulatorConfig] = field(default_factory=_default_encapsulators)
     master: MasterConfig = field(default_factory=MasterConfig)
     heartbeat_interval: float = 1.0  # seconds between heartbeat writes to the master
+    # "toggle"    -> pulse the tag ON/OFF (BOOL watchdog), or
+    # "increment" -> count up a DINT.  Toggle is the classic on/off watchdog.
+    heartbeat_mode: str = "toggle"
 
     def __post_init__(self) -> None:
         self.driver = str(self.driver).lower()
@@ -128,6 +131,9 @@ class PLCConfig:
             raise ConfigError(f"plc.driver must be 'logix' or 'simulated', got {self.driver!r}")
         if not self.encapsulators:
             raise ConfigError("plc.encapsulators must contain at least one encapsulator")
+        self.heartbeat_mode = str(self.heartbeat_mode).lower()
+        if self.heartbeat_mode not in {"toggle", "increment"}:
+            raise ConfigError(f"plc.heartbeat_mode must be 'toggle' or 'increment', got {self.heartbeat_mode!r}")
         try:
             self.heartbeat_interval = float(self.heartbeat_interval)
         except (TypeError, ValueError):
@@ -322,6 +328,7 @@ def _plc_from_dict(data: dict[str, Any]) -> PLCConfig:
         encapsulators=encapsulators,
         master=master,
         heartbeat_interval=data.get("heartbeat_interval", 1.0),
+        heartbeat_mode=data.get("heartbeat_mode", "toggle"),
     )
 
 
@@ -367,6 +374,7 @@ def to_dict(config: Config) -> dict[str, Any]:
         "plc": {
             "driver": config.plc.driver,
             "heartbeat_interval": config.plc.heartbeat_interval,
+            "heartbeat_mode": config.plc.heartbeat_mode,
             "encapsulators": [_encapsulator_to_dict(e) for e in config.plc.encapsulators],
             "master": _master_to_dict(config.plc.master),
         },

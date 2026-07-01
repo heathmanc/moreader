@@ -192,9 +192,10 @@ class PylogixMaster(MasterLink, _PylogixConn):
         if self.cfg.cycle_stop_tag.name:
             self._write(self.cfg.cycle_stop_tag.name, bool(requested))
 
-    def write_heartbeat(self, value: int) -> None:
+    def write_heartbeat(self, value) -> None:
+        # value is a bool (toggle mode -> BOOL tag) or int (increment mode -> DINT).
         if self.cfg.heartbeat_tag.name:
-            self._write(self.cfg.heartbeat_tag.name, int(value))
+            self._write(self.cfg.heartbeat_tag.name, value)
 
 
 class SimulatedMaster(MasterLink):
@@ -225,8 +226,8 @@ class SimulatedMaster(MasterLink):
     def set_cycle_stop(self, requested: bool) -> None:
         self.cycle_stop = bool(requested)
 
-    def write_heartbeat(self, value: int) -> None:
-        self.heartbeat = int(value)
+    def write_heartbeat(self, value) -> None:
+        self.heartbeat = int(value)   # bool True/False -> 1/0
 
 
 # --- factories ---------------------------------------------------------------

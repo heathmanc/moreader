@@ -272,7 +272,10 @@ class MasterPanel(QFrame):
             self._pulse = not self._pulse
             self._last_hb = hb
         self.heart.setStyleSheet(f"color: {'#ef4444' if self._pulse else '#7a2a2a'};")
-        self.heart_val.setText(str(hb))
+        if data.get("heartbeat_mode", "toggle") == "toggle":
+            self.heart_val.setText("ON" if hb else "OFF")
+        else:
+            self.heart_val.setText(str(hb))
 
         flags = []
         if data.get("cycle_stop"):
@@ -768,11 +771,17 @@ class MainWindow(QWidget):
                 mw["tags"][attr] = (name_edit, desc_edit)
             else:
                 self._tag_row(mgrid, row, label, attr, mw["tags"])
-        mgrid.addWidget(QLabel("Heartbeat interval (s)"), 2 + len(MASTER_TAGS), 0)
+        hb_row = 2 + len(MASTER_TAGS)
+        mgrid.addWidget(QLabel("Heartbeat mode"), hb_row, 0)
+        self.cfg_widgets["heartbeat_mode"] = QComboBox()
+        self.cfg_widgets["heartbeat_mode"].addItems(["toggle", "increment"])
+        mgrid.addWidget(self.cfg_widgets["heartbeat_mode"], hb_row, 1)
+        mgrid.addWidget(QLabel("toggle = pulse a BOOL ON/OFF · increment = count up a DINT"), hb_row, 2, 1, 3)
+        mgrid.addWidget(QLabel("Heartbeat interval (s)"), hb_row + 1, 0)
         self.cfg_widgets["heartbeat_interval"] = QDoubleSpinBox()
         self.cfg_widgets["heartbeat_interval"].setRange(0.1, 60.0)
         self.cfg_widgets["heartbeat_interval"].setSingleStep(0.5)
-        mgrid.addWidget(self.cfg_widgets["heartbeat_interval"], 2 + len(MASTER_TAGS), 1)
+        mgrid.addWidget(self.cfg_widgets["heartbeat_interval"], hb_row + 1, 1)
         self.cfg_widgets["master"] = mw
         lay.addWidget(mbox)
 
@@ -928,6 +937,7 @@ class MainWindow(QWidget):
             name_edit.setText(spec.name)
             desc_edit.setText(spec.description)
         self.cfg_widgets["cycle_stop_enabled"].setChecked(m.cycle_stop_enabled)
+        self.cfg_widgets["heartbeat_mode"].setCurrentText(c.plc.heartbeat_mode)
         self.cfg_widgets["heartbeat_interval"].setValue(c.plc.heartbeat_interval)
         self.cfg_widgets["scanner_type"].setCurrentText(c.scanner.type)
         self.cfg_widgets["scanner_port"].setText(c.scanner.port)
@@ -978,6 +988,7 @@ class MainWindow(QWidget):
             "plc": {
                 "driver": self.config.plc.driver,
                 "heartbeat_interval": self.cfg_widgets["heartbeat_interval"].value(),
+                "heartbeat_mode": self.cfg_widgets["heartbeat_mode"].currentText(),
                 "encapsulators": encapsulators,
                 "master": master,
             },

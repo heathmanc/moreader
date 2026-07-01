@@ -75,8 +75,19 @@ def test_master_lockout_clears_bit():
     assert mon.state is State.LOCKED
 
 
-def test_master_heartbeat_increments_and_writes():
+def test_master_heartbeat_toggles_on_off():
+    link, mon = make_master()          # default mode is "toggle"
+    mon.beat()
+    assert link.heartbeat == 1         # ON
+    mon.beat()
+    assert link.heartbeat == 0         # OFF
+    mon.beat()
+    assert link.heartbeat == 1         # ON again
+
+
+def test_master_heartbeat_increment_mode():
     link, mon = make_master()
+    mon.heartbeat_mode = "increment"
     mon.beat()
     mon.beat()
     assert mon.heartbeat == 2

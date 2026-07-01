@@ -59,7 +59,13 @@ the interface.
 | COS (master)        | `MO_Verified`      | write | BOOL | true only when all recipes match the scan |
 | COS (master)        | `MO_Bypassed`      | write | BOOL | true when an operator bypasses (passworded; cleared at shift/lockout) |
 | COS (master)        | `System.Mode.CycleStopReq` | write | BOOL | true on lockout/shift change for a graceful cycle stop |
-| COS (master)        | `Heartbeat`        | write | DINT | incremented every `heartbeat_interval` s  |
+| COS (master)        | `Heartbeat`        | write | BOOL/DINT | watchdog pulsed every `heartbeat_interval` s |
+
+The heartbeat has two modes (Settings → PLCs → Heartbeat mode): **toggle**
+pulses a **BOOL** ON/OFF (the classic watchdog — use this for a BOOL tag), or
+**increment** counts up a **DINT**. Watchdog it in the PLC so the run permit
+drops if the pulse ever stops. To verify it, watch the `Heartbeat` tag in Studio
+5000 (it should flip ON/OFF each interval) or the pulsing ♥ on the master panel.
 
 On a shift change or Manual Lockout, `CycleStopReq` is set true so the line
 finishes its current cycle and stops gracefully; a successful verify (or bypass)

@@ -113,7 +113,9 @@ class MasterMonitor:
         self.mo_bypassed = False
         self.cycle_stop = False
         self.cycle_stop_enabled = True   # when False, moreader never writes CycleStopReq
-        self.heartbeat = 0
+        self.heartbeat = 0               # last written value (0/1 for toggle, count for increment)
+        self.heartbeat_mode = "toggle"   # "toggle" (BOOL on/off) or "increment" (DINT)
+        self._hb_on = False
         self.connected = False
 
     @property
@@ -173,8 +175,15 @@ class MasterMonitor:
         self.cycle_stop = requested
 
     def beat(self) -> None:
-        self.heartbeat = (self.heartbeat + 1) % HEARTBEAT_WRAP
-        self.link.write_heartbeat(self.heartbeat)
+        """Pulse the watchdog: toggle a BOOL ON/OFF, or count up a DINT."""
+
+        if self.heartbeat_mode == "increment":
+            self.heartbeat = (self.heartbeat + 1) % HEARTBEAT_WRAP
+            self.link.write_heartbeat(self.heartbeat)
+        else:  # toggle
+            self._hb_on = not self._hb_on
+            self.heartbeat = 1 if self._hb_on else 0
+            self.link.write_heartbeat(self._hb_on)   # writes a BOOL True/False
 
 
 class Notifier:

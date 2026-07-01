@@ -114,6 +114,7 @@ class PLCWorker(threading.Thread):
             self.encapsulators.append(EncapsulatorMonitor(link))
         self.master = MasterMonitor(build_master(self.config.plc.master, driver))
         self.master.cycle_stop_enabled = self.config.plc.master.cycle_stop_enabled
+        self.master.heartbeat_mode = self.config.plc.heartbeat_mode
 
     def _connect_all(self) -> None:
         for enc in self.encapsulators:
@@ -418,6 +419,7 @@ class PLCWorker(threading.Thread):
             "mo_bypassed": self.master.mo_bypassed if self.master else False,
             "cycle_stop": self.master.cycle_stop if self.master else False,
             "heartbeat": self.master.heartbeat if self.master else 0,
+            "heartbeat_mode": self.config.plc.heartbeat_mode,
             "connected": self.master.connected if self.master else False,
         }
         self.events.put(
