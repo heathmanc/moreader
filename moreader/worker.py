@@ -215,7 +215,10 @@ class PLCWorker(threading.Thread):
             self._emit_status()
             return
         if command == CMD_BYPASS:
-            self._bypass(value == "on")
+            if isinstance(value, dict):
+                self._bypass(bool(value.get("on")), name=value.get("name", ""), reason=value.get("reason", ""))
+            else:
+                self._bypass(value == "on")
             self._emit_status()
             return
         if command == CMD_VERIFY:
@@ -240,7 +243,7 @@ class PLCWorker(threading.Thread):
             except PLCError as exc:
                 self._fail_master(exc)
 
-    def _bypass(self, on: bool) -> None:
+    def _bypass(self, on: bool, name: str = "", reason: str = "") -> None:
         if not (self.master and self.master.connected):
             self.notifier._log("alarm", "Cannot bypass — master not connected.")
             return
@@ -252,10 +255,16 @@ class PLCWorker(threading.Thread):
             self._fail_master(exc)
             return
         if on:
-            self.notifier._log("warn", f"MO BYPASS ENABLED by operator — {self.master.name} may run without a verified scan.")
+            who = name or "operator"
+            self.notifier._log(
+                "warn",
+                f"MO BYPASS ENABLED by {who} — reason: {reason or 'not given'}. "
+                f"{self.master.name} may run without a verified scan.",
+            )
+            self.audit.record("BYPASS", "ON", detail=f"operator={name}; reason={reason}")
         else:
             self.notifier._log("info", "MO bypass cleared.")
-        self.audit.record("BYPASS", "ON" if on else "OFF", detail="operator bypass")
+            self.audit.record("BYPASS", "OFF", detail="operator cleared")
 
     def _reject(self, title: str, reasons: list[str], stuffed=None, assembled=None, battery=None) -> None:
         """Block the master, log the reasons, and pop an error screen in the GUI."""
@@ -438,19 +447,25 @@ class PLCWorker(threading.Thread):
             self._emit_status()
 
     def _revalidate_recipes(self) -> None:
-        """Re-check the verified scan against each encapsulator's live recipe."""
+        """Re-check the verified scan against each encapsulator's live recipe.
+
+        A machine losing power (read fails) is a comms loss, NOT a recipe change:
+        it is marked offline and skipped, and verification is kept.  Only a
+        machine that is online and reads a non-matching (or empty) recipe counts
+        as drift and blocks the line.
+        """
 
         number = self.verified_number
-        drifted = []   # (name, recipe) for encapsulators that no longer match
+        drifted = []   # (name, recipe) for encapsulators that are online but no longer match
         for enc in self.encapsulators:
             if not enc.connected:
                 continue
             try:
                 if not enc.evaluate(number, len(number)):
-                    drifted.append((enc.name, enc.recipe))
+                    drifted.append((enc.name, enc.recipe or "(empty)"))
             except PLCError as exc:
+                # Power/comms loss — do not block; just take it offline.
                 self._fail_enc(enc, exc)
-                drifted.append((enc.name, "read error"))
         if drifted:
             reasons = [f"{name}: recipe is now {recipe}, which no longer matches the verified MO {number}."
                        for name, recipe in drifted]

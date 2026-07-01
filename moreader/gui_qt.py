@@ -668,7 +668,19 @@ class MainWindow(QWidget):
         if password != self.config.security.password:
             QMessageBox.warning(self, "Access denied", "Incorrect password.")
             return
-        self.worker.submit(CMD_BYPASS, "on" if turning_on else "off")
+        if not turning_on:
+            self.worker.submit(CMD_BYPASS, "off")
+            return
+        # Turning bypass ON: capture who and why for the audit log.
+        name, ok = QInputDialog.getText(self, "Bypass — who", "Your name:")
+        if not ok or not name.strip():
+            QMessageBox.warning(self, "Bypass cancelled", "A name is required to bypass.")
+            return
+        reason, ok = QInputDialog.getText(self, "Bypass — why", "Reason for bypass:")
+        if not ok or not reason.strip():
+            QMessageBox.warning(self, "Bypass cancelled", "A reason is required to bypass.")
+            return
+        self.worker.submit(CMD_BYPASS, {"on": True, "name": name.strip(), "reason": reason.strip()})
 
     # -- settings -------------------------------------------------------
     def _open_settings(self) -> None:

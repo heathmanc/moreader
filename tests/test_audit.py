@@ -48,6 +48,15 @@ def make_worker(tmp_path, recipes=(1001, 1001, 1001)):
     return worker
 
 
+def test_bypass_records_name_and_reason(tmp_path):
+    worker = make_worker(tmp_path)
+    worker._handle(CMD_BYPASS, {"on": True, "name": "Sam Lee", "reason": "jam clear"})
+    rows = read_rows(tmp_path)
+    bypass = [r for r in rows if r["event"] == "BYPASS" and r["result"] == "ON"][0]
+    assert "Sam Lee" in bypass["detail"]
+    assert "jam clear" in bypass["detail"]
+
+
 def test_worker_audits_pass_and_fail(tmp_path):
     worker = make_worker(tmp_path)
     worker._handle(CMD_VERIFY, MO_1001)                 # PASS

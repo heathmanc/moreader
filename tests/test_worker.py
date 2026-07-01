@@ -155,6 +155,30 @@ def test_recipe_stays_valid_when_unchanged():
     assert worker.master.mo_verified is True
 
 
+def test_power_loss_does_not_stop_verification():
+    from moreader.plc import PLCError
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker._handle(CMD_VERIFY, MO_1001)
+    # Machine 2 loses power: its recipe read now raises a comms error.
+    def dead():
+        raise PLCError("no route to host")
+    worker.encapsulators[1].link.read_recipe = dead
+    worker._housekeeping()
+    assert worker.master.mo_verified is True           # NOT blocked
+    assert worker.encapsulators[1].connected is False  # just marked offline
+    assert not errors(worker)                          # no "recipe changed" screen
+
+
+def test_online_empty_recipe_blocks():
+    worker = make_worker(recipes=(1001, 1001, 1001))
+    worker._handle(CMD_VERIFY, MO_1001)
+    worker.encapsulators[0].link.set_recipe("")        # online but empty
+    worker._housekeeping()
+    assert worker.master.mo_verified is False
+    errs = errors(worker)
+    assert errs and errs[0]["title"] == "RECIPE CHANGED DURING RUN"
+
+
 def test_assertive_bypass_overwrites_plc_set_bit():
     worker = make_worker()
     # moreader believes bypass is OFF; someone sets it ON in the PLC.

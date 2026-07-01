@@ -108,8 +108,14 @@ touch the cycle-stop bit — the PLC handles that.)
 
 `MO_Bypassed` is **assertive**: moreader re-writes it to its own value every
 poll, so setting the bypass bit directly in the PLC to skip verification is
-overwritten — only the passworded BYPASS button turns it on. If a scan verifies
-while bypass is on, moreader sets `MO_Verified` and clears `MO_Bypassed`.
+overwritten — only the passworded BYPASS button turns it on. Enabling bypass
+prompts for the operator's **name and reason**, which are written to the audit
+log. If a scan verifies while bypass is on, moreader sets `MO_Verified` and
+clears `MO_Bypassed`.
+
+A machine that **loses power** during a run is treated as a comms loss, not a
+recipe change: it shows OFFLINE and verification is kept. Only a machine that is
+online and reads a different (or empty) recipe blocks the line.
 
 ### Optional Assembled-Battery cross-check
 
