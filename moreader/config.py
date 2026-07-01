@@ -42,8 +42,8 @@ class TagSpec:
 
 
 # (attribute, GUI label, default name, default description)
-ENCAP_RECIPE = ("recipe_tag", "Recipe (DINT)", "recipe[0].Name",
-                "DINT recipe number this encapsulator is set to run")
+ENCAP_RECIPE = ("recipe_tag", "Recipe", "recipe[0].Name",
+                "Recipe number, or a dash-separated list to search (e.g. 1321-1333-8634-9121)")
 MASTER_TAGS: list[tuple[str, str, str, str]] = [
     ("mo_verified_tag", "MO Verified", "MO_Verified",
      "BOOL the program SETS true when the scan is verified (allows COS to run)"),

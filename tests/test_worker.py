@@ -215,6 +215,17 @@ def test_invalid_scan_emits_error_screen():
     assert any("could not read 4 digits" in r for r in errs[0]["reasons"])
 
 
+def test_recipe_list_verifies_any_match():
+    # All three encapsulators hold the same shared-recipe list.
+    worker = make_worker(recipes=("1321-1333-8634-9121",) * 3)
+    worker._handle(CMD_VERIFY, "2220-8634")     # last 4 = 8634, in the list
+    assert worker.master.mo_verified is True
+    assert all(e.state.value == "MATCH" for e in worker.encapsulators)
+
+    worker._handle(CMD_VERIFY, "2220-7777")     # not in the list
+    assert worker.master.mo_verified is False
+
+
 def test_f_prefix_format_verifies():
     worker = make_worker(recipes=(1301, 1301, 1301))
     worker._handle(CMD_VERIFY, "F2220-1301")    # F format: 10 chars, last 4 = 1301
@@ -274,7 +285,7 @@ def test_status_event_shape():
     assert statuses
     last = statuses[-1]
     assert len(last["encapsulators"]) == 3
-    assert last["encapsulators"][0]["recipe"] == 1001
+    assert last["encapsulators"][0]["recipe"] == "1001"
     assert last["master"]["mo_verified"] is True
     assert last["master"]["name"] == "COS"
     assert "cycle_stop" in last["master"]

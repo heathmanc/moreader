@@ -82,8 +82,12 @@ class EncapsulatorLink(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
-    def read_recipe(self) -> int:
-        """Return the recipe-number DINT this encapsulator is set to run."""
+    def read_recipe(self) -> str:
+        """Return the recipe this encapsulator is set to run.
+
+        This is a single number, or a dash-separated list of numbers to search
+        (e.g. ``1321-1333-8634-9121``) when several products share a recipe.
+        """
 
 
 class PylogixEncapsulator(EncapsulatorLink, _PylogixConn):
@@ -101,13 +105,13 @@ class PylogixEncapsulator(EncapsulatorLink, _PylogixConn):
     def close(self) -> None:
         self._close()
 
-    def read_recipe(self) -> int:
+    def read_recipe(self) -> str:
         value = self._read(self.cfg.recipe_tag.name)
-        return int(value) if value is not None else 0
+        return "" if value is None else str(value)
 
 
 class SimulatedEncapsulator(EncapsulatorLink):
-    def __init__(self, cfg: EncapsulatorConfig | None = None, recipe: int = 1001) -> None:
+    def __init__(self, cfg: EncapsulatorConfig | None = None, recipe="1001") -> None:
         super().__init__(cfg or EncapsulatorConfig())
         self._recipe = recipe
         self.connected = False
@@ -119,11 +123,11 @@ class SimulatedEncapsulator(EncapsulatorLink):
     def close(self) -> None:
         self.connected = False
 
-    def set_recipe(self, recipe: int) -> None:
+    def set_recipe(self, recipe) -> None:
         self._recipe = recipe
 
-    def read_recipe(self) -> int:
-        return self._recipe
+    def read_recipe(self) -> str:
+        return str(self._recipe)
 
 
 # --- master (COS) ------------------------------------------------------------

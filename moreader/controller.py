@@ -11,6 +11,7 @@ scanned number; the master's MO_Verified bit follows that verdict.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -37,7 +38,7 @@ class State(str, Enum):
 class EncapsulatorResult:
     name: str
     state: State
-    recipe: int | None
+    recipe: str | None
     scanned: str | None
     matched: bool | None
 
@@ -48,7 +49,7 @@ class EncapsulatorMonitor:
     def __init__(self, link: EncapsulatorLink) -> None:
         self.link = link
         self.state = State.DISCONNECTED
-        self.recipe: int | None = None
+        self.recipe: str | None = None
         self.scanned: str | None = None
         self.matched: bool | None = None
         self.connected = False
@@ -83,10 +84,12 @@ class EncapsulatorMonitor:
         self.matched = None
 
     def evaluate(self, scanned: str | None, last_n: int) -> bool:
-        """Compare the scanned MO digits (string, leading zeros kept) to the recipe.
+        """Compare the scanned MO digits to this encapsulator's recipe.
 
-        The recipe DINT is zero-padded to the same width so a scan of ``0042``
-        matches a recipe of ``42`` without ever discarding the operator's zeros.
+        The recipe may be a single number or a dash-separated list to search
+        (e.g. ``1321-1333-8634-9121``).  The scan matches if it equals *any* of
+        the values.  Each value is zero-padded to the scan width so a scan of
+        ``0042`` matches a recipe of ``42`` without discarding leading zeros.
         """
 
         self.recipe = self.link.read_recipe()
@@ -95,7 +98,8 @@ class EncapsulatorMonitor:
             matched = False
         else:
             width = last_n if (last_n and last_n > 0) else len(scanned)
-            matched = scanned == recipe_to_digits(self.recipe, width)
+            tokens = [t for t in re.split(r"\D+", str(self.recipe)) if t]
+            matched = any(scanned == recipe_to_digits(int(t), width) for t in tokens)
         self.matched = matched
         self.state = State.MATCH if matched else State.MISMATCH
         return matched

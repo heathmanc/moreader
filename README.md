@@ -90,6 +90,13 @@ Each rule reads either the **last N digits** or **N characters at a position**:
 
 The same list is used for both the Stuffed Element and Assembled Battery scans.
 
+### Shared recipes (a list to search)
+
+Each encapsulator's recipe tag can hold a **single number** or a
+**dash-separated list** when several products share a recipe, e.g.
+`1321-1333-8634-9121`. The scan matches that encapsulator if the scanned digits
+equal **any** value in the list.
+
 ### Optional Assembled-Battery cross-check
 
 Enable **Battery Scan** in the configuration to require two different MOs. VERIFY

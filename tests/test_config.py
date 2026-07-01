@@ -46,7 +46,7 @@ def test_compare_and_secondary_defaults():
 def test_recipe_tag_default_and_description():
     e = Config().plc.encapsulators[0]
     assert e.recipe_tag.name == "recipe[0].Name"
-    assert "DINT" in e.recipe_tag.description
+    assert "recipe" in e.recipe_tag.description.lower()
 
 
 def test_from_dict_reads_encapsulators_and_master():

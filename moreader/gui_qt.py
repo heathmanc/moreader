@@ -164,13 +164,14 @@ class EncapsulatorTile(QFrame):
         lay.addWidget(self.status_lbl)
 
         lay.addSpacing(10)
-        cap = QLabel("RECIPE (DINT)")
+        cap = QLabel("RECIPE")
         cap.setObjectName("Caption")
         cap.setAlignment(Qt.AlignCenter)
         lay.addWidget(cap)
         self.model_lbl = QLabel("—")
         self.model_lbl.setObjectName("TileModel")
         self.model_lbl.setAlignment(Qt.AlignCenter)
+        self.model_lbl.setWordWrap(True)
         lay.addWidget(self.model_lbl)
 
         lay.addStretch(1)
@@ -198,7 +199,11 @@ class EncapsulatorTile(QFrame):
             state = "DISCONNECTED"
         self.name_lbl.setText(data.get("name", self.name_lbl.text()))
         recipe = data.get("recipe")
-        self.model_lbl.setText("—" if recipe is None else str(recipe))
+        text = "—" if recipe in (None, "") else str(recipe)
+        self.model_lbl.setText(text)
+        # A single number stays huge; a dash-separated list shrinks so it fits.
+        size = 68 if len(text) <= 6 else (34 if len(text) <= 14 else 24)
+        self.model_lbl.setStyleSheet(f"font-size: {size}px; font-weight: 900; background: transparent;")
         scanned = data.get("scanned")
         self.scan_lbl.setText("—" if scanned is None else str(scanned))
         self._apply(state)

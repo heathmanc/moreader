@@ -14,7 +14,8 @@ plc:
   #                 "increment" counts up a DINT. Use toggle for a BOOL tag.
   heartbeat_mode: toggle
 
-  # Three read-only encapsulator PLCs. moreader reads only the recipe DINT.
+  # Three read-only encapsulator PLCs. moreader reads only the recipe tag (a
+  # single number, or a dash-separated list of numbers to search).
   encapsulators:
     - name: Encapsulator 1
       ip_address: 192.168.1.11
@@ -22,17 +23,17 @@ plc:
       tags:
         recipe_tag:
           name: recipe[0].Name
-          description: DINT recipe number this encapsulator is set to run
+          description: Recipe number or dash-separated list to search (e.g. 1321-1333-8634-9121)
     - name: Encapsulator 2
       ip_address: 192.168.1.12
       slot: 0
       tags:
-        recipe_tag: {name: recipe[0].Name, description: DINT recipe number this encapsulator is set to run}
+        recipe_tag: {name: recipe[0].Name, description: Recipe number or dash-separated list to search (e.g. 1321-1333-8634-9121)}
     - name: Encapsulator 3
       ip_address: 192.168.1.13
       slot: 0
       tags:
-        recipe_tag: {name: recipe[0].Name, description: DINT recipe number this encapsulator is set to run}
+        recipe_tag: {name: recipe[0].Name, description: Recipe number or dash-separated list to search (e.g. 1321-1333-8634-9121)}
 
   # The master PLC (COS). moreader SETS MO_Verified true when the scan matches
   # every encapsulator, clears it on shift change / manual lockout, and writes

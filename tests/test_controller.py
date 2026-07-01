@@ -43,6 +43,22 @@ def test_encapsulator_invalid_scan():
     assert mon.state is State.MISMATCH
 
 
+def test_encapsulator_matches_any_recipe_in_list():
+    link, mon = make_encap("1321-1333-8634-9121")
+    assert mon.evaluate("1321", 4) is True     # first in the list
+    assert mon.evaluate("8634", 4) is True      # middle of the list
+    assert mon.evaluate("9121", 4) is True      # last in the list
+    assert mon.evaluate("9999", 4) is False     # not in the list
+    assert mon.state is State.MISMATCH
+
+
+def test_encapsulator_recipe_list_keeps_zeros():
+    link, mon = make_encap("0042-1000")
+    assert mon.evaluate("0042", 4) is True
+    assert mon.evaluate("1000", 4) is True
+    assert mon.evaluate("0420", 4) is False
+
+
 def test_encapsulator_leading_zeros_preserved():
     # Recipe 42 should match a scan of 0042 (zeros kept), not 4200 or 0420.
     link, mon = make_encap(42)
@@ -55,7 +71,7 @@ def test_encapsulator_leading_zeros_preserved():
 def test_encapsulator_is_read_only():
     # SimulatedEncapsulator exposes no permit/alarm — only the recipe is read.
     link, mon = make_encap(1234)
-    assert mon.link.read_recipe() == 1234
+    assert mon.link.read_recipe() == "1234"
     assert not hasattr(link, "run_permit")
 
 
