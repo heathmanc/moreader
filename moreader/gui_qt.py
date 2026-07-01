@@ -35,12 +35,13 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QTableWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .config import ENCAP_RECIPE, MASTER_TAGS, Config, ConfigError, from_dict, save_config
+from .config import ENCAP_RECIPE, MASTER_TAGS, Config, ConfigError, MoFormat, from_dict, save_config
 from .plc import PLCError, build_encapsulator, build_master
 from .scanner import ScannerError, SerialScanSource
 from .worker import CMD_BYPASS, CMD_LOCKOUT, CMD_VERIFY, PLCWorker
@@ -118,6 +119,8 @@ QTabBar::tab {{ background: {PANEL}; padding: 10px 18px; margin-right: 2px;
     border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: 600; }}
 QTabBar::tab:selected {{ background: {PANEL_HI}; color: {ACCENT}; }}
 QScrollArea {{ border: none; }}
+QTableWidget {{ background: {PANEL}; gridline-color: {EDGE}; border: 1px solid {EDGE}; }}
+QHeaderView::section {{ background: {PANEL_HI}; color: {MUTED}; padding: 6px; border: none; font-weight: 600; }}
 QLabel#DialogTitle {{ font-size: 26px; font-weight: 800; }}
 QLineEdit#ScanField {{ font-size: 28px; padding: 16px; font-family: 'Consolas', monospace; }}
 """
@@ -603,20 +606,19 @@ class MainWindow(QWidget):
 
     def _verify_mo(self) -> None:
         sec = self.config.secondary
-        n_last = self.config.compare.mo_last_digits
         if sec.enabled:
             steps = [
                 ("mo", f"SCAN {sec.stuffed_element_label.upper()}",
-                 f"Scan the Stuffed Element MO. Its last {n_last} digits are matched to every encapsulator."),
+                 "Scan the Stuffed Element MO. Its digits are matched to every encapsulator."),
                 ("assembled_mo", f"SCAN {sec.assembled_mo_label.upper()}",
-                 f"Scan the Assembled Battery MO. Its last {sec.assembled_mo_last_digits} digits are matched to the battery label."),
+                 "Scan the Assembled Battery MO. Its digits are matched to the battery label."),
                 ("battery", f"SCAN {sec.battery_label.upper()}",
                  f"Scan the battery label. Its first {sec.battery_first_digits} digits must match the Assembled Battery MO."),
             ]
         else:
             steps = [(
                 "mo", "SCAN MANUFACTURING ORDER",
-                f"Scan the MO barcode. The last {n_last} digits are matched to every encapsulator.",
+                "Scan the MO barcode. Its digits are matched to every encapsulator.",
             )]
         # Serial scanner configured but the port could not be opened.
         if self.config.scanner.type == "serial" and self.scan_source is None:
@@ -703,7 +705,7 @@ class MainWindow(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self._build_plcs_tab(), "PLCs")
         tabs.addTab(self._build_scanner_tab(), "Scanner")
-        tabs.addTab(self._build_compare_tab(), "Compare")
+        tabs.addTab(self._build_formats_tab(), "MO Formats")
         tabs.addTab(self._build_secondary_tab(), "Battery Scan")
         tabs.addTab(self._build_shift_tab(), "Shift")
         tabs.addTab(self._build_security_tab(), "Security")
@@ -815,24 +817,73 @@ class MainWindow(QWidget):
         grid.setRowStretch(4, 1)
         return w
 
-    def _build_compare_tab(self) -> QWidget:
+    def _build_formats_tab(self) -> QWidget:
         w = QWidget()
-        grid = QGridLayout(w)
-        grid.setColumnStretch(1, 1)
-        grid.addWidget(QLabel("Compare last N digits"), 0, 0)
-        self.cfg_widgets["mo_last_digits"] = QSpinBox()
-        self.cfg_widgets["mo_last_digits"].setRange(0, 18)
-        grid.addWidget(self.cfg_widgets["mo_last_digits"], 0, 1)
-        grid.addWidget(QLabel("0 = use the whole number. Default 4."), 0, 2)
-        self.cfg_widgets["digits_only"] = QCheckBox("Strip non-digit characters before matching")
-        grid.addWidget(self.cfg_widgets["digits_only"], 1, 0, 1, 3)
-        grid.addWidget(QLabel("Required MO scan length"), 2, 0)
-        self.cfg_widgets["mo_length"] = QSpinBox()
-        self.cfg_widgets["mo_length"].setRange(0, 64)
-        grid.addWidget(self.cfg_widgets["mo_length"], 2, 1)
-        grid.addWidget(QLabel("exact character count of the MO scan (0 = no check). Default 9."), 2, 2)
-        grid.setRowStretch(3, 1)
+        v = QVBoxLayout(w)
+        intro = QLabel(
+            "These rules read the digits from the Stuffed Element and Assembled Battery scans. "
+            "The first row whose “Starts with” matches the scan is used. Leave “Starts with” "
+            "blank for the default rule, and keep that row last.\n\n"
+            "Read mode: “last” = last N digits (ignores letters/dashes). "
+            "“slice” = N characters counted from the Start position (1 = first character)."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {MUTED};")
+        v.addWidget(intro)
+
+        self.fmt_table = QTableWidget(0, 5)
+        self.fmt_table.setHorizontalHeaderLabels(
+            ["Starts with", "Exact length (0=any)", "Read mode", "Start (slice)", "Digits"]
+        )
+        self.fmt_table.verticalHeader().setDefaultSectionSize(38)
+        header = self.fmt_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        self.fmt_table.setColumnWidth(0, 150)
+        self.fmt_table.setColumnWidth(1, 170)
+        self.fmt_table.setColumnWidth(2, 130)
+        self.fmt_table.setColumnWidth(3, 120)
+        v.addWidget(self.fmt_table, 1)
+
+        row = QHBoxLayout()
+        add = QPushButton("+ Add rule")
+        add.clicked.connect(lambda: self._add_format_row())
+        rem = QPushButton("Remove selected rule")
+        rem.clicked.connect(self._remove_format_row)
+        row.addWidget(add)
+        row.addWidget(rem)
+        row.addStretch(1)
+        v.addLayout(row)
         return w
+
+    def _add_format_row(self, fmt: MoFormat | None = None) -> None:
+        r = self.fmt_table.rowCount()
+        self.fmt_table.insertRow(r)
+        prefix = QLineEdit(fmt.prefix if fmt else "")
+        length = QSpinBox(); length.setRange(0, 64); length.setValue(fmt.length if fmt else 0)
+        mode = QComboBox(); mode.addItems(["last", "slice"]); mode.setCurrentText(fmt.take if fmt else "last")
+        start = QSpinBox(); start.setRange(1, 64); start.setValue(fmt.start if fmt else 1)
+        count = QSpinBox(); count.setRange(1, 18); count.setValue(fmt.count if fmt else 4)
+        for c, widget in enumerate([prefix, length, mode, start, count]):
+            self.fmt_table.setCellWidget(r, c, widget)
+
+    def _remove_format_row(self) -> None:
+        r = self.fmt_table.currentRow()
+        if r < 0:
+            r = self.fmt_table.rowCount() - 1
+        if r >= 0:
+            self.fmt_table.removeRow(r)
+
+    def _gather_formats(self) -> list:
+        formats = []
+        for r in range(self.fmt_table.rowCount()):
+            formats.append({
+                "prefix": self.fmt_table.cellWidget(r, 0).text(),
+                "length": self.fmt_table.cellWidget(r, 1).value(),
+                "take": self.fmt_table.cellWidget(r, 2).currentText(),
+                "start": self.fmt_table.cellWidget(r, 3).value(),
+                "count": self.fmt_table.cellWidget(r, 4).value(),
+            })
+        return formats
 
     def _build_secondary_tab(self) -> QWidget:
         w = QWidget()
@@ -843,7 +894,9 @@ class MainWindow(QWidget):
         )
         grid.addWidget(self.cfg_widgets["secondary_enabled"], 0, 0, 1, 3)
 
-        note = QLabel("Battery label first digits are matched to the Assembled Battery MO's last digits.")
+        note = QLabel("The Stuffed Element and Assembled Battery scans are read using the MO Formats "
+                      "tab. The battery label's first digits are matched to the Assembled Battery MO.")
+        note.setWordWrap(True)
         note.setStyleSheet(f"color: {MUTED};")
         grid.addWidget(note, 1, 0, 1, 3)
 
@@ -857,27 +910,17 @@ class MainWindow(QWidget):
         self.cfg_widgets["battery_label"] = QLineEdit()
         grid.addWidget(self.cfg_widgets["battery_label"], 4, 1, 1, 2)
 
-        grid.addWidget(QLabel("Assembled MO last N digits"), 5, 0)
-        self.cfg_widgets["assembled_mo_last_digits"] = QSpinBox()
-        self.cfg_widgets["assembled_mo_last_digits"].setRange(1, 18)
-        grid.addWidget(self.cfg_widgets["assembled_mo_last_digits"], 5, 1)
-        grid.addWidget(QLabel("default 4"), 5, 2)
-        grid.addWidget(QLabel("Assembled MO scan length"), 6, 0)
-        self.cfg_widgets["assembled_mo_length"] = QSpinBox()
-        self.cfg_widgets["assembled_mo_length"].setRange(0, 64)
-        grid.addWidget(self.cfg_widgets["assembled_mo_length"], 6, 1)
-        grid.addWidget(QLabel("exact characters (0 = no check). Default 9."), 6, 2)
-        grid.addWidget(QLabel("Battery first N digits"), 7, 0)
+        grid.addWidget(QLabel("Battery first N digits"), 5, 0)
         self.cfg_widgets["battery_first_digits"] = QSpinBox()
         self.cfg_widgets["battery_first_digits"].setRange(1, 18)
-        grid.addWidget(self.cfg_widgets["battery_first_digits"], 7, 1)
-        grid.addWidget(QLabel("default 4"), 7, 2)
-        grid.addWidget(QLabel("Battery min scan length"), 8, 0)
+        grid.addWidget(self.cfg_widgets["battery_first_digits"], 5, 1)
+        grid.addWidget(QLabel("first digits of the battery label, matched to the Assembled MO. Default 4."), 5, 2)
+        grid.addWidget(QLabel("Battery min scan length"), 6, 0)
         self.cfg_widgets["battery_min_length"] = QSpinBox()
         self.cfg_widgets["battery_min_length"].setRange(0, 64)
-        grid.addWidget(self.cfg_widgets["battery_min_length"], 8, 1)
-        grid.addWidget(QLabel("min characters (0 = no check). Default 10."), 8, 2)
-        grid.setRowStretch(9, 1)
+        grid.addWidget(self.cfg_widgets["battery_min_length"], 6, 1)
+        grid.addWidget(QLabel("min characters (0 = no check). Default 10."), 6, 2)
+        grid.setRowStretch(7, 1)
         return w
 
     def _build_shift_tab(self) -> QWidget:
@@ -944,15 +987,13 @@ class MainWindow(QWidget):
         self.cfg_widgets["scanner_port"].setText(c.scanner.port)
         self.cfg_widgets["scanner_baud"].setValue(c.scanner.baudrate)
         self.cfg_widgets["scan_pattern"].setText(c.scanner.scan_pattern or "")
-        self.cfg_widgets["mo_last_digits"].setValue(c.compare.mo_last_digits)
-        self.cfg_widgets["digits_only"].setChecked(c.compare.digits_only)
-        self.cfg_widgets["mo_length"].setValue(c.compare.mo_length)
+        self.fmt_table.setRowCount(0)
+        for fmt in c.mo_formats:
+            self._add_format_row(fmt)
         self.cfg_widgets["secondary_enabled"].setChecked(c.secondary.enabled)
         self.cfg_widgets["stuffed_element_label"].setText(c.secondary.stuffed_element_label)
         self.cfg_widgets["assembled_mo_label"].setText(c.secondary.assembled_mo_label)
         self.cfg_widgets["battery_label"].setText(c.secondary.battery_label)
-        self.cfg_widgets["assembled_mo_last_digits"].setValue(c.secondary.assembled_mo_last_digits)
-        self.cfg_widgets["assembled_mo_length"].setValue(c.secondary.assembled_mo_length)
         self.cfg_widgets["battery_first_digits"].setValue(c.secondary.battery_first_digits)
         self.cfg_widgets["battery_min_length"].setValue(c.secondary.battery_min_length)
         self.cfg_widgets["start_times"].setText(", ".join(c.shift.start_times))
@@ -999,18 +1040,12 @@ class MainWindow(QWidget):
                 "baudrate": self.cfg_widgets["scanner_baud"].value(),
                 "scan_pattern": self.cfg_widgets["scan_pattern"].text() or None,
             },
-            "compare": {
-                "mo_last_digits": self.cfg_widgets["mo_last_digits"].value(),
-                "digits_only": self.cfg_widgets["digits_only"].isChecked(),
-                "mo_length": self.cfg_widgets["mo_length"].value(),
-            },
+            "mo_formats": self._gather_formats(),
             "secondary": {
                 "enabled": self.cfg_widgets["secondary_enabled"].isChecked(),
                 "stuffed_element_label": self.cfg_widgets["stuffed_element_label"].text() or "Stuffed Element MO",
                 "assembled_mo_label": self.cfg_widgets["assembled_mo_label"].text() or "Assembled Battery MO",
                 "battery_label": self.cfg_widgets["battery_label"].text() or "Battery Label",
-                "assembled_mo_last_digits": self.cfg_widgets["assembled_mo_last_digits"].value(),
-                "assembled_mo_length": self.cfg_widgets["assembled_mo_length"].value(),
                 "battery_first_digits": self.cfg_widgets["battery_first_digits"].value(),
                 "battery_min_length": self.cfg_widgets["battery_min_length"].value(),
             },

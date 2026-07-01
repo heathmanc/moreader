@@ -208,11 +208,33 @@ def errors(worker):
 
 def test_invalid_scan_emits_error_screen():
     worker = make_worker()
-    worker._handle(CMD_VERIFY, "NODIGITSX")     # 9 chars (passes length) but no number
+    worker._handle(CMD_VERIFY, "NODIGITSX")     # 9 chars (passes length) but no digits
     assert worker.master.mo_verified is False
     errs = errors(worker)
     assert errs and errs[0]["title"] == "STUFFED ELEMENT MO SCAN FAILED"
-    assert any("No number could be read" in r for r in errs[0]["reasons"])
+    assert any("could not read 4 digits" in r for r in errs[0]["reasons"])
+
+
+def test_f_prefix_format_verifies():
+    worker = make_worker(recipes=(1301, 1301, 1301))
+    worker._handle(CMD_VERIFY, "F2220-1301")    # F format: 10 chars, last 4 = 1301
+    assert worker.master.mo_verified is True
+    assert worker.encapsulators[0].scanned == "1301"
+
+
+def test_gl_prefix_format_verifies():
+    worker = make_worker(recipes=(7564, 7564, 7564))
+    worker._handle(CMD_VERIFY, "GL0007564-0000")  # GL: 4 chars at position 6 = 7564
+    assert worker.master.mo_verified is True
+    assert worker.encapsulators[0].scanned == "7564"
+
+
+def test_f_prefix_wrong_length_blocks():
+    worker = make_worker(recipes=(1301, 1301, 1301))
+    worker._handle(CMD_VERIFY, "F2220-13010")   # 11 chars, F needs exactly 10
+    assert worker.master.mo_verified is False
+    errs = errors(worker)
+    assert any("10 characters" in r for r in errs[0]["reasons"])
 
 
 def test_mismatch_error_screen_lists_reason():

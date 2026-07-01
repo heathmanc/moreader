@@ -16,13 +16,46 @@ import re
 import sys
 from abc import ABC, abstractmethod
 
-from .config import CompareConfig, ScannerConfig
+from .config import CompareConfig, MoFormat, ScannerConfig
 
 log = logging.getLogger(__name__)
 
 
 class ScannerError(Exception):
     """Raised when the scanner cannot be read."""
+
+
+def match_mo_format(raw: str, formats: list[MoFormat]) -> MoFormat | None:
+    """Pick the first format whose prefix matches the start of the scan."""
+
+    text = raw.strip("\r\n").strip().upper()
+    for fmt in formats:
+        if fmt.prefix == "" or text.startswith(fmt.prefix.upper()):
+            return fmt
+    return None
+
+
+def parse_mo(raw: str, formats: list[MoFormat]) -> tuple["MoFormat | None", str | None, str | None]:
+    """Parse an MO barcode using the matching format.
+
+    Returns ``(format, digits, error)``.  ``digits`` is the compare value (a
+    string, leading zeros kept); ``error`` is a short reason when it fails.
+    """
+
+    text = raw.strip("\r\n").strip()
+    fmt = match_mo_format(text, formats)
+    if fmt is None:
+        return None, None, "does not match any known barcode format"
+    if fmt.length and len(text) != fmt.length:
+        return fmt, None, f"must be {fmt.length} characters (you scanned {len(text)})"
+    if fmt.take == "slice":
+        value = text[fmt.start - 1: fmt.start - 1 + fmt.count]
+    else:  # last
+        digits = "".join(c for c in text if c.isdigit())
+        value = digits[-fmt.count:] if fmt.count > 0 else digits
+    if fmt.count > 0 and (len(value) != fmt.count or not value.isdigit()):
+        return fmt, None, f"could not read {fmt.count} digits"
+    return fmt, value, None
 
 
 def _apply_pattern(value: str, scan_pattern: str | None) -> str:

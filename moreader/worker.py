@@ -22,7 +22,7 @@ from .audit import AuditLog
 from .config import Config
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier, State
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import extract_battery_digits, extract_last_digits, extract_mo_digits
+from .scanner import extract_battery_digits, parse_mo
 from .shift import ShiftDetector
 
 log = logging.getLogger(__name__)
@@ -284,28 +284,21 @@ class PLCWorker(threading.Thread):
             raw_battery = None
 
         assembled_digits = None
+        mo_text = (raw_mo or "").strip("\r\n").strip()
 
         # --- Stuffed Element MO -> encapsulator recipe check ---
-        mo_text = (raw_mo or "").strip("\r\n").strip()
-        mo_len = self.config.compare.mo_length
-        if mo_len and len(mo_text) != mo_len:
+        fmt, number, err = parse_mo(raw_mo or "", self.config.mo_formats)
+        if err:
             self._reject("STUFFED ELEMENT MO SCAN FAILED",
-                         [f"MO must be {mo_len} characters — you scanned {len(mo_text)}.",
+                         [f"Stuffed Element MO {err}.",
                           "Make sure you scanned the Stuffed Element MO, not another label."],
-                         stuffed=mo_text)
-            return
-
-        number = extract_mo_digits(raw_mo, self.config.scanner, self.config.compare)
-        if number is None:
-            self._reject("STUFFED ELEMENT MO SCAN FAILED",
-                         [f"No number could be read from the scan {raw_mo!r}."],
                          stuffed=mo_text)
             return
         self.notifier._log("info", f"Stuffed Element MO {number} → comparing to each encapsulator recipe.")
 
         connected = [e for e in self.encapsulators if e.connected]
         all_present = len(connected) == len(self.encapsulators)
-        last_n = self.config.compare.mo_last_digits
+        last_n = fmt.count
         reasons: list[str] = []
         if not all_present:
             offline = [e.name for e in self.encapsulators if not e.connected]
@@ -326,13 +319,12 @@ class PLCWorker(threading.Thread):
         # --- Assembled Battery MO vs battery label (optional) ---
         if self.config.secondary.enabled:
             sec = self.config.secondary
-            assembled_text = (raw_assembled or "").strip("\r\n").strip()
             battery_text = (raw_battery or "").strip("\r\n").strip()
-            if sec.assembled_mo_length and len(assembled_text) != sec.assembled_mo_length:
+            afmt, assembled_digits, aerr = parse_mo(raw_assembled or "", self.config.mo_formats)
+            if aerr:
                 self._reset_battery()
                 self._reject("ASSEMBLED BATTERY MO SCAN FAILED",
-                             [f"Assembled Battery MO must be {sec.assembled_mo_length} characters — "
-                              f"you scanned {len(assembled_text)}.",
+                             [f"Assembled Battery MO {aerr}.",
                               "Make sure you scanned the Assembled Battery MO."],
                              stuffed=number)
                 return
@@ -344,7 +336,6 @@ class PLCWorker(threading.Thread):
                               "Make sure you scanned the battery label, not the MO."],
                              stuffed=number)
                 return
-            assembled_digits = extract_last_digits(assembled_text, self.config.scanner, sec.assembled_mo_last_digits)
             self.battery_scanned = extract_battery_digits(battery_text, self.config.scanner, sec.battery_first_digits)
             self.battery_matched = (
                 assembled_digits is not None

@@ -13,7 +13,7 @@ from pathlib import Path
 from .config import Config, ConfigError, load_or_default
 from .controller import EncapsulatorMonitor, MasterMonitor, Notifier
 from .plc import PLCError, build_encapsulator, build_master
-from .scanner import ScannerError, build_scanner, extract_mo_digits
+from .scanner import ScannerError, build_scanner, parse_mo
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,11 +74,14 @@ def _run_headless(config: Config, simulate: bool) -> int:
                 break
             if not raw.strip():
                 continue
-            number = extract_mo_digits(raw, config.scanner, config.compare)
+            fmt, number, err = parse_mo(raw, config.mo_formats)
+            if err or number is None:
+                print(f"[INVALID] {err or 'could not read the MO'}.")
+                continue
             connected = [e for e in encs if e.connected]
             all_matched = len(connected) == len(encs)
             for enc in connected:
-                all_matched = enc.evaluate(number, config.compare.mo_last_digits) and all_matched
+                all_matched = enc.evaluate(number, fmt.count) and all_matched
             master.set_verified(all_matched)
             notifier.scan(number, [e.result() for e in encs], all_matched)
     except KeyboardInterrupt:

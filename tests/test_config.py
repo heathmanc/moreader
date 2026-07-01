@@ -110,6 +110,24 @@ def test_invalid_driver_rejected():
         from_dict({"plc": {"driver": "modbus"}})
 
 
+def test_mo_formats_defaults_include_f_gl_default():
+    prefixes = [f.prefix for f in Config().mo_formats]
+    assert prefixes == ["F", "GL", ""]
+    gl = [f for f in Config().mo_formats if f.prefix == "GL"][0]
+    assert gl.take == "slice" and gl.start == 6 and gl.count == 4
+
+
+def test_mo_formats_roundtrip(tmp_path):
+    cfg = Config()
+    cfg.mo_formats[0].length = 12          # tweak the F rule
+    path = tmp_path / "config.yaml"
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.mo_formats[0].prefix == "F"
+    assert loaded.mo_formats[0].length == 12
+    assert [f.prefix for f in loaded.mo_formats] == ["F", "GL", ""]
+
+
 def test_stale_config_keys_are_ignored():
     # A config written by an older moreader version must not crash the loader.
     stale = {

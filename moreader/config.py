@@ -186,6 +186,46 @@ class CompareConfig:
 
 
 @dataclass
+class MoFormat:
+    """One MO barcode format, chosen by how the scan starts.
+
+    ``take = "last"``  -> strip non-digits and take the last ``count`` digits.
+    ``take = "slice"`` -> take ``count`` characters starting at ``start`` (1-based).
+
+    Examples:
+      F2220-1301  -> prefix "F",  length 10, take "last",  count 4  -> 1301
+      GL0007564-0000 -> prefix "GL", take "slice", start 6, count 4 -> 7564
+      2220-1321   -> prefix "",   length 9,  take "last",  count 4  -> 1321
+    """
+
+    prefix: str = ""      # matched at the start of the scan (case-insensitive); "" = default
+    length: int = 0       # required exact length of the raw scan (0 = no check)
+    take: str = "last"    # "last" or "slice"
+    start: int = 1        # 1-based start position (slice mode)
+    count: int = 4        # how many digits to compare
+
+    def __post_init__(self) -> None:
+        self.prefix = str(self.prefix)
+        self.take = str(self.take).lower()
+        if self.take not in {"last", "slice"}:
+            raise ConfigError(f"mo_formats.take must be 'last' or 'slice', got {self.take!r}")
+        try:
+            self.length = int(self.length)
+            self.start = int(self.start)
+            self.count = int(self.count)
+        except (TypeError, ValueError):
+            raise ConfigError("mo_formats length/start/count must be integers")
+
+
+def _default_mo_formats() -> list[MoFormat]:
+    return [
+        MoFormat(prefix="F", length=10, take="last", count=4),
+        MoFormat(prefix="GL", length=0, take="slice", start=6, count=4),
+        MoFormat(prefix="", length=9, take="last", count=4),   # default / fallback (keep last)
+    ]
+
+
+@dataclass
 class ShiftConfig:
     """When a shift change forces a re-scan (clears MO_Verified)."""
 
@@ -245,6 +285,8 @@ class Config:
     shift: ShiftConfig = field(default_factory=ShiftConfig)
     secondary: SecondaryConfig = field(default_factory=SecondaryConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    # MO barcode formats (Stuffed Element + Assembled Battery scans).
+    mo_formats: list[MoFormat] = field(default_factory=_default_mo_formats)
 
 
 # --- parsing -----------------------------------------------------------------
@@ -332,6 +374,15 @@ def _plc_from_dict(data: dict[str, Any]) -> PLCConfig:
     )
 
 
+def _mo_formats_from_dict(raw) -> list[MoFormat]:
+    if raw is None:
+        return _default_mo_formats()
+    if not isinstance(raw, list):
+        raise ConfigError("mo_formats must be a list")
+    formats = [_build(MoFormat, f or {}) for f in raw]
+    return formats or _default_mo_formats()
+
+
 def from_dict(data: dict[str, Any]) -> Config:
     if not isinstance(data, dict):
         raise ConfigError("Top-level configuration must be a mapping")
@@ -343,6 +394,7 @@ def from_dict(data: dict[str, Any]) -> Config:
         shift=_build(ShiftConfig, _section(data, "shift")),
         secondary=_build(SecondaryConfig, _section(data, "secondary")),
         audit=_build(AuditConfig, _section(data, "audit")),
+        mo_formats=_mo_formats_from_dict(data.get("mo_formats")),
     )
 
 
@@ -383,6 +435,7 @@ def to_dict(config: Config) -> dict[str, Any]:
         "shift": asdict(config.shift),
         "secondary": asdict(config.secondary),
         "audit": asdict(config.audit),
+        "mo_formats": [asdict(f) for f in config.mo_formats],
     }
 
 

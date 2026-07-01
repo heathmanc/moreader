@@ -67,19 +67,32 @@ scanner:
   # MO barcode before the last-N-digits rule, e.g. 'MO(?P<model>\d+)'.
   scan_pattern: null
 
-compare:
-  mo_last_digits: 4             # compare only the last 4 digits of the scan (0 = whole number)
-  digits_only: true            # strip non-digit characters before taking the last N
-  mo_length: 9                  # required exact character count of the MO scan (0 = no check)
+# How the Stuffed Element and Assembled Battery MO barcodes are read.  The first
+# rule whose "prefix" matches the start of the scan is used; the blank-prefix
+# rule is the default and must be last.
+#   take: "last"  -> strip non-digits, take the last N (count)
+#         "slice" -> take N characters starting at 'start' (1-based)
+mo_formats:
+  - prefix: "F"                  # F2220-1301 -> 1301
+    length: 10                   # required exact length (0 = no check)
+    take: last
+    count: 4
+  - prefix: "GL"                 # GL0007564-0000 -> 7564
+    length: 0
+    take: slice
+    start: 6
+    count: 4
+  - prefix: ""                   # default, e.g. 2220-1321 -> 1321
+    length: 9
+    take: last
+    count: 4
 
 secondary:                      # optional Assembled Battery cross-check (3-step scan)
   enabled: false
-  stuffed_element_label: Stuffed Element MO    # step 1 — last digits matched to the encapsulators
-  assembled_mo_label: Assembled Battery MO     # step 2 — a DIFFERENT MO
+  stuffed_element_label: Stuffed Element MO    # step 1 — read with mo_formats, matched to the encapsulators
+  assembled_mo_label: Assembled Battery MO     # step 2 — a DIFFERENT MO, read with mo_formats
   battery_label: Battery Label                 # step 3
-  assembled_mo_last_digits: 4   # last N digits of the Assembled Battery MO
-  assembled_mo_length: 9        # required exact length of the Assembled Battery MO scan (0 = no check)
-  battery_first_digits: 4       # first N digits of the battery label, compared to the Assembled MO last N
+  battery_first_digits: 4       # first N digits of the battery label, compared to the Assembled MO
   battery_min_length: 10        # min characters of the battery scan (keeps it distinct from the MO)
 
 shift:

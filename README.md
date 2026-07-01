@@ -75,6 +75,21 @@ On a shift change or Manual Lockout, `CycleStopReq` is set true so the line
 finishes its current cycle and stops gracefully; a successful verify (or bypass)
 clears it.
 
+### MO barcode formats
+
+Different products use different MO barcode layouts, so the digits to compare are
+chosen by a list of **formats** (Settings → MO Formats). The first rule whose
+prefix matches the start of the scan wins; the blank-prefix rule is the default.
+Each rule reads either the **last N digits** or **N characters at a position**:
+
+| Starts with | Length | Read | Result (example) |
+| ----------- | ------ | ---- | ---------------- |
+| `F`  | 10  | last 4 | `F2220-1301` → `1301` |
+| `GL` | any | 4 chars at pos 6 | `GL0007564-0000` → `7564` |
+| (blank) | 9 | last 4 | `2220-1321` → `1321` |
+
+The same list is used for both the Stuffed Element and Assembled Battery scans.
+
 ### Optional Assembled-Battery cross-check
 
 Enable **Battery Scan** in the configuration to require two different MOs. VERIFY
