@@ -67,6 +67,10 @@ pulses a **BOOL** ON/OFF (the classic watchdog — use this for a BOOL tag), or
 drops if the pulse ever stops. To verify it, watch the `Heartbeat` tag in Studio
 5000 (it should flip ON/OFF each interval) or the pulsing ♥ on the master panel.
 
+The heartbeat runs on its **own dedicated thread** with a drift-free schedule,
+so its timing stays steady regardless of encapsulator reads, scans, or PLC
+reconnect attempts happening on the main worker thread.
+
 On a shift change or Manual Lockout, `CycleStopReq` is set true so the line
 finishes its current cycle and stops gracefully; a successful verify (or bypass)
 clears it.

@@ -11,6 +11,7 @@ scanned number; the master's MO_Verified bit follows that verdict.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from enum import Enum
 
@@ -117,34 +118,39 @@ class MasterMonitor:
         self.heartbeat_mode = "toggle"   # "toggle" (BOOL on/off) or "increment" (DINT)
         self._hb_on = False
         self.connected = False
+        # The heartbeat runs on its own thread, so every link access is guarded.
+        self._lock = threading.RLock()
 
     @property
     def name(self) -> str:
         return self.link.name
 
     def connect(self) -> None:
-        self.link.connect()
-        self.connected = True
-        # Start safe: nothing verified, bypassed, or requesting a cycle stop.
-        self.link.set_mo_verified(False)
-        self.link.set_mo_bypassed(False)
-        if self.cycle_stop_enabled:
-            self.link.set_cycle_stop(False)
-        self.mo_verified = False
-        self.mo_bypassed = False
-        self.cycle_stop = False
-        self._recompute()
+        with self._lock:
+            self.link.connect()
+            self.connected = True
+            # Start safe: nothing verified, bypassed, or requesting a cycle stop.
+            self.link.set_mo_verified(False)
+            self.link.set_mo_bypassed(False)
+            if self.cycle_stop_enabled:
+                self.link.set_cycle_stop(False)
+            self.mo_verified = False
+            self.mo_bypassed = False
+            self.cycle_stop = False
+            self._recompute()
 
     def close(self) -> None:
-        try:
-            self.link.close()
-        finally:
-            self.connected = False
-            self.state = State.DISCONNECTED
+        with self._lock:
+            try:
+                self.link.close()
+            finally:
+                self.connected = False
+                self.state = State.DISCONNECTED
 
     def mark_disconnected(self) -> None:
-        self.connected = False
-        self.state = State.DISCONNECTED
+        with self._lock:
+            self.connected = False
+            self.state = State.DISCONNECTED
 
     def _recompute(self) -> None:
         if self.mo_bypassed:
@@ -155,28 +161,36 @@ class MasterMonitor:
             self.state = State.LOCKED
 
     def set_verified(self, verified: bool) -> None:
-        self.link.set_mo_verified(verified)
-        self.mo_verified = verified
-        self._recompute()
+        with self._lock:
+            self.link.set_mo_verified(verified)
+            self.mo_verified = verified
+            self._recompute()
 
     def read_verified(self) -> bool:
         """Read the live MO_Verified bit (the PLC may have cleared it)."""
-        return self.link.read_mo_verified()
+        with self._lock:
+            return self.link.read_mo_verified()
 
     def set_bypassed(self, bypassed: bool) -> None:
-        self.link.set_mo_bypassed(bypassed)
-        self.mo_bypassed = bypassed
-        self._recompute()
+        with self._lock:
+            self.link.set_mo_bypassed(bypassed)
+            self.mo_bypassed = bypassed
+            self._recompute()
 
     def set_cycle_stop(self, requested: bool) -> None:
         if not self.cycle_stop_enabled:
             return   # the PLC owns CycleStopReq; moreader stays out of it
-        self.link.set_cycle_stop(requested)
-        self.cycle_stop = requested
+        with self._lock:
+            self.link.set_cycle_stop(requested)
+            self.cycle_stop = requested
 
     def beat(self) -> None:
         """Pulse the watchdog: toggle a BOOL ON/OFF, or count up a DINT."""
 
+        with self._lock:
+            self._beat_locked()
+
+    def _beat_locked(self) -> None:
         if self.heartbeat_mode == "increment":
             self.heartbeat = (self.heartbeat + 1) % HEARTBEAT_WRAP
             self.link.write_heartbeat(self.heartbeat)

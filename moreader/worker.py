@@ -73,7 +73,8 @@ class PLCWorker(threading.Thread):
         self.encapsulators: list[EncapsulatorMonitor] = []
         self.master: MasterMonitor | None = None
         self._running = False
-        self._last_beat = 0.0
+        self._hb_stop: threading.Event | None = None
+        self._hb_thread: threading.Thread | None = None
         self._offline: set[str] = set()   # names currently logged as offline (throttle)
         self.battery_scanned: int | None = None
         self.battery_matched: bool | None = None
@@ -90,7 +91,9 @@ class PLCWorker(threading.Thread):
         self._running = True
         self._build()
         self._connect_all()
-        loop_timeout = max(0.1, min(self.config.shift.poll_interval, self.config.plc.heartbeat_interval))
+        self._start_heartbeat()
+        # Poll cadence for the main loop; the heartbeat has its own thread.
+        loop_timeout = max(0.1, min(self.config.shift.poll_interval, 1.0))
         while self._running:
             try:
                 command, value = self.commands.get(timeout=loop_timeout)
@@ -99,10 +102,45 @@ class PLCWorker(threading.Thread):
             if command is not None:
                 self._handle(command, value)
             self._housekeeping()
+        self._stop_heartbeat()
         for enc in self.encapsulators:
             enc.close()
         if self.master:
             self.master.close()
+
+    # -- heartbeat (dedicated thread for steady timing) -----------------
+    def _start_heartbeat(self) -> None:
+        self._hb_stop = threading.Event()
+        self._hb_thread = threading.Thread(target=self._heartbeat_loop, name="Heartbeat", daemon=True)
+        self._hb_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        if self._hb_stop is not None:
+            self._hb_stop.set()
+        if self._hb_thread is not None:
+            self._hb_thread.join(timeout=2.0)
+
+    def _heartbeat_loop(self) -> None:
+        interval = max(0.05, self.config.plc.heartbeat_interval)
+        next_t = time.monotonic() + interval
+        while not self._hb_stop.is_set():
+            delay = next_t - time.monotonic()
+            if self._hb_stop.wait(max(0.0, delay)):
+                break
+            next_t += interval
+            if next_t < time.monotonic():       # fell far behind; resync
+                next_t = time.monotonic() + interval
+            master = self.master
+            if master is not None and master.connected:
+                try:
+                    master.beat()
+                    self.events.put({
+                        "type": "heartbeat",
+                        "value": master.heartbeat,
+                        "mode": self.config.plc.heartbeat_mode,
+                    })
+                except PLCError:
+                    master.mark_disconnected()   # main loop will reconnect + log
 
     # -- setup ----------------------------------------------------------
     def _build(self) -> None:
@@ -346,14 +384,7 @@ class PLCWorker(threading.Thread):
         if self.master and not self.master.connected:
             self._connect_master()
 
-        # Heartbeat to the master on its own interval.
-        now = time.monotonic()
-        if self.master and self.master.connected and (now - self._last_beat) >= self.config.plc.heartbeat_interval:
-            self._last_beat = now
-            try:
-                self.master.beat()
-            except PLCError as exc:
-                self._fail_master(exc)
+        # (The heartbeat runs on its own thread — see _heartbeat_loop.)
 
         # Changeover: the PLC cleared MO_Verified on its own -> require a re-scan.
         if self.master and self.master.connected and self.master.mo_verified:

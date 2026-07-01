@@ -223,12 +223,26 @@ def test_mismatch_error_screen_lists_reason():
     assert any("Encapsulator 3" in r and "2002" in r for r in errs[0]["reasons"])
 
 
-def test_heartbeat_written_during_housekeeping():
-    worker = make_worker()
-    worker._last_beat = -1000          # force a heartbeat this pass
-    worker._housekeeping()
-    assert worker.master.heartbeat >= 1
-    assert worker.master.link.heartbeat == worker.master.heartbeat
+def test_heartbeat_thread_beats_steadily_and_toggles():
+    import threading
+    import time
+
+    cfg = Config()
+    cfg.shift.start_times = []
+    cfg.plc.heartbeat_interval = 0.05
+    worker = PLCWorker(cfg, simulate=True, events=queue.Queue())
+    worker._build()
+    worker._connect_all()
+    worker._hb_stop = threading.Event()
+    t = threading.Thread(target=worker._heartbeat_loop, daemon=True)
+    t.start()
+    time.sleep(0.3)                    # ~6 beats at a 50 ms interval
+    worker._hb_stop.set()
+    t.join(timeout=1.0)
+
+    beats = [e for e in drain(worker) if e["type"] == "heartbeat"]
+    assert len(beats) >= 3             # steady beats, not starved
+    assert {b["value"] for b in beats} == {0, 1}   # toggled ON/OFF
 
 
 def test_status_event_shape():

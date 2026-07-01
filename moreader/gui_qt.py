@@ -253,6 +253,15 @@ class MasterPanel(QFrame):
         self.status_lbl.setStyleSheet(f"color: {accent};")
         self.lamp.set_color(accent)
 
+    def pulse(self, value, mode: str = "toggle") -> None:
+        """Update just the heartbeat indicator (called live from its own thread)."""
+
+        if value != self._last_hb:
+            self._pulse = not self._pulse
+            self._last_hb = value
+        self.heart.setStyleSheet(f"color: {'#ef4444' if self._pulse else '#7a2a2a'};")
+        self.heart_val.setText(("ON" if value else "OFF") if mode == "toggle" else str(value))
+
     def update_from(self, data: dict, secondary: dict | None = None) -> None:
         self.name_lbl.setText(f"{data.get('name', 'COS')}  ·  MASTER")
         if not data.get("connected", False):
@@ -267,15 +276,7 @@ class MasterPanel(QFrame):
             self._apply("VERIFIED")
         else:
             self._apply("LOCKED")
-        hb = data.get("heartbeat", 0)
-        if hb != self._last_hb:
-            self._pulse = not self._pulse
-            self._last_hb = hb
-        self.heart.setStyleSheet(f"color: {'#ef4444' if self._pulse else '#7a2a2a'};")
-        if data.get("heartbeat_mode", "toggle") == "toggle":
-            self.heart_val.setText("ON" if hb else "OFF")
-        else:
-            self.heart_val.setText(str(hb))
+        self.pulse(data.get("heartbeat", 0), data.get("heartbeat_mode", "toggle"))
 
         flags = []
         if data.get("cycle_stop"):
@@ -1163,6 +1164,9 @@ class MainWindow(QWidget):
             self._append_log(event.get("level", "info"), event.get("text", ""))
         elif etype == "error":
             self._show_error(event.get("title", "SCAN FAILED"), event.get("reasons", []))
+        elif etype == "heartbeat":
+            if self.master_panel:
+                self.master_panel.pulse(event.get("value", 0), event.get("mode", "toggle"))
         elif etype == "status":
             encs = event.get("encapsulators", [])
             for tile, data in zip(self.tiles, encs):
