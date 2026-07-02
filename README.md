@@ -25,8 +25,14 @@ is written to the master so it knows the application is alive.
 
 * **Three encapsulator tiles** (read-only) — each shows its recipe DINT and,
   after a scan, MATCH (green) or MISMATCH (red); grey when offline.
-* **Master (COS) panel** — shows **MO VERIFIED** (green) or **LOCKED** (amber),
-  plus a pulsing heartbeat indicator and its counter.
+* **Master (COS) panel** — shows **MO VERIFIED** (green) or **LOCKED**, plus a
+  pulsing heartbeat indicator and its counter. A **reason strip** under the title
+  always spells out the current state — e.g. *"Waiting for a manufacturing order
+  scan…"*, *"Verified on MO 1321. Line may run."*, or, after a rejected scan, the
+  exact cause (*"Last scan failed: Encapsulator 2 set to recipe 2002, but the MO
+  ends in 1321."*). The whole panel turns **red** after a genuine scan failure and
+  stays **amber** when it is simply waiting for a scan, so the operator can tell a
+  fault from a fresh shift at a glance.
 * **VERIFY MO** — there is no text box anywhere; this button opens a modal dialog
   that captures the USB scanner's keystrokes directly (the operator cannot type
   an order in by hand).

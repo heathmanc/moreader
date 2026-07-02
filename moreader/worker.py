@@ -79,6 +79,11 @@ class PLCWorker(threading.Thread):
         self.battery_scanned: int | None = None
         self.battery_matched: bool | None = None
         self.verified_number: str | None = None   # the scan that granted the current verify
+        # Human-readable reason for the current master state, shown on the panel.
+        # ``last_reason_failed`` is True only when the last scan genuinely failed
+        # (so the panel turns red) versus simply waiting for a scan (amber).
+        self.last_reason: str = ""
+        self.last_reason_failed: bool = False
 
     # -- public API -----------------------------------------------------
     def submit(self, command: str, value: str | None = None) -> None:
@@ -162,6 +167,7 @@ class PLCWorker(threading.Thread):
         if self.config.shift.lock_on_startup:
             self.notifier.shift_change(self.detector.current_shift_label())
             self._lockout(cycle_stop=False)   # nothing is running yet at startup
+            self._set_reason("Waiting for a manufacturing order scan to start the shift.")
         self._emit_status()
 
     def _connect_enc(self, enc: EncapsulatorMonitor) -> None:
@@ -211,6 +217,7 @@ class PLCWorker(threading.Thread):
         if command == CMD_LOCKOUT:
             self.notifier._log("warn", "Manual lockout — MO_Verified/MO_Bypassed cleared, cycle stop requested.")
             self._lockout(cycle_stop=True)
+            self._set_reason("Locked out by the operator. Scan the MO to run again.")
             self.audit.record("LOCKOUT", detail="manual lockout button")
             self._emit_status()
             return
@@ -223,6 +230,11 @@ class PLCWorker(threading.Thread):
             return
         if command == CMD_VERIFY:
             self._verify(value)
+
+    def _set_reason(self, text: str, failed: bool = False) -> None:
+        """Record why the master is in its current state (shown on the panel)."""
+        self.last_reason = text
+        self.last_reason_failed = failed
 
     def _reset_battery(self) -> None:
         self.battery_scanned = None
@@ -261,15 +273,18 @@ class PLCWorker(threading.Thread):
                 f"MO BYPASS ENABLED by {who} — reason: {reason or 'not given'}. "
                 f"{self.master.name} may run without a verified scan.",
             )
+            self._set_reason(f"Bypassed by {who} — {reason or 'no reason given'}.")
             self.audit.record("BYPASS", "ON", detail=f"operator={name}; reason={reason}")
         else:
             self.notifier._log("info", "MO bypass cleared.")
+            self._set_reason("Bypass cleared. Scan the MO to run again.")
             self.audit.record("BYPASS", "OFF", detail="operator cleared")
 
     def _reject(self, title: str, reasons: list[str], stuffed=None, assembled=None, battery=None) -> None:
         """Block the master, log the reasons, and pop an error screen in the GUI."""
 
         self.verified_number = None
+        self._set_reason("Last scan failed: " + " ".join(reasons), failed=True)
         for r in reasons:
             self.notifier._log("alarm", r)
         self.events.put({"type": "error", "title": title, "reasons": reasons})
@@ -382,6 +397,7 @@ class PLCWorker(threading.Thread):
                 self._fail_master(exc)
         self.audit.record("VERIFY", "PASS", stuffed_mo=number,
                           assembled_mo=assembled_digits, battery=self.battery_scanned)
+        self._set_reason(f"Verified on MO {number}. Line may run.")
         self.notifier._log("ok", f"MO {number} VERIFIED — {self.master.name} may run.")
         self._emit_status()
 
@@ -409,6 +425,7 @@ class PLCWorker(threading.Thread):
                 if not self.master.read_verified():
                     self.notifier._log("warn", "Changeover detected (PLC cleared MO_Verified) — scan required.")
                     self._lockout(cycle_stop=False)   # the PLC is driving the changeover
+                    self._set_reason("Changeover — the PLC cleared the verification. Scan the MO.")
                     self.audit.record("CHANGEOVER", detail="PLC cleared MO_Verified")
                     self._emit_status()
                     return
@@ -420,6 +437,7 @@ class PLCWorker(threading.Thread):
         if self.detector.check() and running:
             self.notifier.shift_change(self.detector.current_shift_label())
             self._lockout(cycle_stop=True)   # graceful stop so the cycle finishes
+            self._set_reason("Shift change — scan the MO to start the new shift.")
             self.audit.record("SHIFT_LOCKOUT", detail=self.detector.current_shift_label())
             self._emit_status()
             return
@@ -474,6 +492,7 @@ class PLCWorker(threading.Thread):
             self.audit.record("RECIPE_CHANGED", "BLOCK", stuffed_mo=number,
                               detail="; ".join(f"{n}={r}" for n, r in drifted))
             self.events.put({"type": "error", "title": "RECIPE CHANGED DURING RUN", "reasons": reasons})
+            self._set_reason("Recipe changed during the run. " + " ".join(reasons), failed=True)
             self._lockout(cycle_stop=False)   # the PLC handles the cycle stop
         self._emit_status()
 
@@ -507,6 +526,8 @@ class PLCWorker(threading.Thread):
             "heartbeat": self.master.heartbeat if self.master else 0,
             "heartbeat_mode": self.config.plc.heartbeat_mode,
             "connected": self.master.connected if self.master else False,
+            "reason": self.last_reason,
+            "reason_failed": self.last_reason_failed,
         }
         self.events.put(
             {

@@ -72,6 +72,15 @@ STATE_GLYPH = {
     "DISCONNECTED": "–",
 }
 LOG_COLOR = {"ok": "#27c46b", "alarm": "#ef4444", "warn": "#eab308", "info": MUTED}
+# Text/border color for the master panel's reason strip, keyed by the state it
+# explains ("MISMATCH" is used for a genuine scan failure, red-on-fail).
+REASON_COLOR = {
+    "VERIFIED": "#b7f5cf",
+    "BYPASSED": "#e3ccff",
+    "MISMATCH": "#ffb4b4",
+    "LOCKED": MUTED,
+    "DISCONNECTED": MUTED,
+}
 
 STYLESHEET = f"""
 QWidget {{ background: {BG}; color: {TEXT}; font-family: 'Segoe UI', 'DejaVu Sans', sans-serif; font-size: 14px; }}
@@ -221,10 +230,12 @@ class MasterPanel(QFrame):
         self.setObjectName("Master")
         self._last_hb = None
         self._pulse = False
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(22, 16, 22, 16)
-        lay.setSpacing(18)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(22, 14, 22, 16)
+        outer.setSpacing(10)
 
+        top = QHBoxLayout()
+        top.setSpacing(18)
         left = QVBoxLayout()
         left.setSpacing(2)
         self.name_lbl = QLabel(f"{name}  ·  MASTER")
@@ -236,15 +247,15 @@ class MasterPanel(QFrame):
         self.flags_lbl = QLabel("")
         self.flags_lbl.setObjectName("Caption")
         left.addWidget(self.flags_lbl)
-        lay.addLayout(left)
-        lay.addStretch(1)
+        top.addLayout(left)
+        top.addStretch(1)
 
         self.lamp = Lamp(30)
-        lay.addWidget(self.lamp)
+        top.addWidget(self.lamp)
         self.status_lbl = QLabel("OFFLINE")
         self.status_lbl.setObjectName("MasterStatus")
-        lay.addWidget(self.status_lbl)
-        lay.addSpacing(20)
+        top.addWidget(self.status_lbl)
+        top.addSpacing(20)
 
         hb = QVBoxLayout()
         hb.setSpacing(0)
@@ -257,15 +268,42 @@ class MasterPanel(QFrame):
         self.heart_val.setAlignment(Qt.AlignCenter)
         hb.addWidget(self.heart)
         hb.addWidget(self.heart_val)
-        lay.addLayout(hb)
-        self._apply("DISCONNECTED")
+        top.addLayout(hb)
+        outer.addLayout(top)
 
-    def _apply(self, state: str) -> None:
+        # Reason strip: spells out why the line is locked / verified / bypassed.
+        self.reason_strip = QFrame()
+        self.reason_strip.setObjectName("ReasonStrip")
+        rlay = QHBoxLayout(self.reason_strip)
+        rlay.setContentsMargins(14, 9, 14, 9)
+        self.reason_lbl = QLabel("")
+        self.reason_lbl.setObjectName("Reason")
+        self.reason_lbl.setWordWrap(True)
+        rlay.addWidget(self.reason_lbl)
+        outer.addWidget(self.reason_strip)
+
+        self._apply("DISCONNECTED")
+        self._set_reason("", "DISCONNECTED")
+
+    def _apply(self, state: str, status_override: str | None = None) -> None:
         bg, accent, text = STATE.get(state, STATE["DISCONNECTED"])
         self.setStyleSheet(f"QFrame#Master {{ background: {bg}; border: 2px solid {accent}; border-radius: 12px; }}")
-        self.status_lbl.setText(text)
+        self.status_lbl.setText(status_override or text)
         self.status_lbl.setStyleSheet(f"color: {accent};")
         self.lamp.set_color(accent)
+
+    def _set_reason(self, text: str, state: str) -> None:
+        """Show (or hide) the reason strip, colored to match the state."""
+        if not text:
+            self.reason_strip.setVisible(False)
+            return
+        self.reason_strip.setVisible(True)
+        color = REASON_COLOR.get(state, MUTED)
+        self.reason_strip.setStyleSheet(
+            f"QFrame#ReasonStrip {{ background: rgba(0,0,0,0.30); border: 1px solid {color}; border-radius: 8px; }}"
+        )
+        self.reason_lbl.setText(text)
+        self.reason_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {color}; background: transparent;")
 
     def pulse(self, value, mode: str = "toggle") -> None:
         """Update just the heartbeat indicator (called live from its own thread)."""
@@ -283,13 +321,25 @@ class MasterPanel(QFrame):
             self.heart.setStyleSheet(f"color: {MUTED};")
             self.heart_val.setText("offline")
             self.flags_lbl.setText("")
+            self._set_reason("", "DISCONNECTED")
             return
+        reason = data.get("reason", "")
+        reason_failed = bool(data.get("reason_failed"))
         if data.get("mo_bypassed"):
             self._apply("BYPASSED")
+            reason_state = "BYPASSED"
         elif data.get("mo_verified"):
             self._apply("VERIFIED")
+            reason_state = "VERIFIED"
+        elif reason_failed:
+            # Locked after a genuine scan failure — red background, LOCKED label.
+            self._apply("MISMATCH", status_override=STATE["LOCKED"][2])
+            reason_state = "MISMATCH"
         else:
+            # Simply waiting for a scan — amber.
             self._apply("LOCKED")
+            reason_state = "LOCKED"
+        self._set_reason(reason, reason_state)
         self.pulse(data.get("heartbeat", 0), data.get("heartbeat_mode", "toggle"))
 
         flags = []
