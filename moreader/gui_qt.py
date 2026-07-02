@@ -83,34 +83,34 @@ REASON_COLOR = {
 }
 
 STYLESHEET = f"""
-QWidget {{ background: {BG}; color: {TEXT}; font-family: 'Segoe UI', 'DejaVu Sans', sans-serif; font-size: 14px; }}
+QWidget {{ background: {BG}; color: {TEXT}; font-family: 'Segoe UI', 'DejaVu Sans', sans-serif; font-size: 13px; }}
 #Header {{ background: {PANEL_HI}; border-bottom: 2px solid {ACCENT}; }}
-#HeaderTitle {{ font-size: 24px; font-weight: 700; color: {TEXT}; }}
-#HeaderSub {{ font-size: 13px; color: {MUTED}; }}
-QLabel#Clock {{ font-size: 18px; color: {TEXT}; font-weight: 600; }}
-QLabel#ConnSummary {{ font-size: 14px; font-weight: 600; }}
+#HeaderTitle {{ font-size: 19px; font-weight: 700; color: {TEXT}; }}
+#HeaderSub {{ font-size: 11px; color: {MUTED}; }}
+QLabel#Clock {{ font-size: 15px; color: {TEXT}; font-weight: 600; }}
+QLabel#ConnSummary {{ font-size: 13px; font-weight: 600; }}
 QFrame#Tile, QFrame#Master {{ background: {PANEL}; border: 2px solid {EDGE}; border-radius: 12px; }}
 QLabel#TileName, QLabel#TileStatus, QLabel#Caption, QLabel#TileModel, QLabel#TileScan,
 QLabel#TileGlyph, QLabel#MasterName, QLabel#MasterStatus, QLabel#Heart, QLabel#HeartVal,
 QLabel#HeaderTitle, QLabel#HeaderSub, QLabel#Clock, QLabel#ConnSummary {{ background: transparent; }}
-QLabel#TileName {{ font-size: 24px; font-weight: 800; }}
-QLabel#TileStatus {{ font-size: 26px; font-weight: 800; }}
-QLabel#TileGlyph {{ font-size: 96px; font-weight: 900; }}
-QLabel#Caption {{ font-size: 14px; color: {MUTED}; font-weight: 600; }}
-QLabel#TileModel {{ font-size: 68px; font-weight: 900; }}
-QLabel#TileScan {{ font-size: 30px; font-weight: 700; color: {TEXT}; }}
-QLabel#MasterName {{ font-size: 22px; font-weight: 800; }}
-QLabel#MasterStatus {{ font-size: 26px; font-weight: 800; }}
-QLabel#Heart {{ font-size: 22px; font-weight: 800; }}
-QLabel#HeartVal {{ font-size: 16px; color: {MUTED}; font-family: 'Consolas', monospace; }}
-QPushButton#Verify {{ background: {ACCENT}; color: white; font-size: 26px; font-weight: 800;
-    border: none; border-radius: 12px; padding: 22px; }}
+QLabel#TileName {{ font-size: 18px; font-weight: 800; }}
+QLabel#TileStatus {{ font-size: 21px; font-weight: 800; }}
+QLabel#TileGlyph {{ font-size: 60px; font-weight: 900; }}
+QLabel#Caption {{ font-size: 11px; color: {MUTED}; font-weight: 600; }}
+QLabel#TileModel {{ font-size: 52px; font-weight: 900; }}
+QLabel#TileScan {{ font-size: 24px; font-weight: 700; color: {TEXT}; }}
+QLabel#MasterName {{ font-size: 18px; font-weight: 800; }}
+QLabel#MasterStatus {{ font-size: 20px; font-weight: 800; }}
+QLabel#Heart {{ font-size: 18px; font-weight: 800; }}
+QLabel#HeartVal {{ font-size: 12px; color: {MUTED}; font-family: 'Consolas', monospace; }}
+QPushButton#Verify {{ background: {ACCENT}; color: white; font-size: 20px; font-weight: 800;
+    border: none; border-radius: 12px; padding: 14px; }}
 QPushButton#Verify:hover {{ background: #1f6fd0; }}
-QPushButton#Lockout {{ background: #5a1d1d; color: #ffd7d7; font-size: 16px; font-weight: 800;
-    border: 1px solid #7a2a2a; border-radius: 10px; padding: 18px; }}
+QPushButton#Lockout {{ background: #5a1d1d; color: #ffd7d7; font-size: 13px; font-weight: 800;
+    border: 1px solid #7a2a2a; border-radius: 10px; padding: 10px; }}
 QPushButton#Lockout:hover {{ background: #6e2525; }}
-QPushButton#Bypass {{ background: #2a1a3a; color: #e3ccff; font-size: 16px; font-weight: 800;
-    border: 1px solid #5b3a7a; border-radius: 10px; padding: 18px; }}
+QPushButton#Bypass {{ background: #2a1a3a; color: #e3ccff; font-size: 13px; font-weight: 800;
+    border: 1px solid #5b3a7a; border-radius: 10px; padding: 10px; }}
 QPushButton#Bypass:hover {{ background: #38214d; }}
 QPushButton {{ background: {PANEL_HI}; color: {TEXT}; border: 1px solid {EDGE};
     border-radius: 8px; padding: 9px 16px; font-weight: 600; }}
@@ -118,7 +118,7 @@ QPushButton:hover {{ background: {EDGE}; }}
 QPushButton#Primary {{ background: {ACCENT}; color: white; border: none; }}
 QPushButton#Primary:hover {{ background: #1f6fd0; }}
 QPlainTextEdit#Log {{ background: #0a1018; border: 1px solid {EDGE}; border-radius: 8px;
-    font-family: 'Consolas', 'DejaVu Sans Mono', monospace; font-size: 12px; }}
+    font-family: 'Consolas', 'DejaVu Sans Mono', monospace; font-size: 11px; }}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{ background: {PANEL_HI}; border: 1px solid {EDGE};
     border-radius: 6px; padding: 7px; selection-background-color: {ACCENT}; }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {ACCENT}; }}
@@ -154,8 +154,8 @@ class EncapsulatorTile(QFrame):
         super().__init__()
         self.setObjectName("Tile")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 16, 20, 18)
-        lay.setSpacing(4)
+        lay.setContentsMargins(14, 10, 14, 12)
+        lay.setSpacing(2)
 
         self.name_lbl = QLabel(name)
         self.name_lbl.setObjectName("TileName")
@@ -173,7 +173,7 @@ class EncapsulatorTile(QFrame):
         self.status_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.status_lbl)
 
-        lay.addSpacing(10)
+        lay.addStretch(1)
         cap = QLabel("RECIPE")
         cap.setObjectName("Caption")
         cap.setAlignment(Qt.AlignCenter)
@@ -214,10 +214,10 @@ class EncapsulatorTile(QFrame):
                   if t] if recipe not in (None, "") else []
         if not tokens:
             self.model_lbl.setText("—")
-            size = 68
+            size = 52
         else:
             self.model_lbl.setText("\n".join(tokens))
-            size = {1: 68, 2: 48, 3: 38}.get(len(tokens), 30)   # 4+ -> 30
+            size = {1: 52, 2: 36, 3: 28}.get(len(tokens), 22)   # 4+ -> 22
         self.model_lbl.setStyleSheet(f"font-size: {size}px; font-weight: 900; background: transparent;")
         scanned = data.get("scanned")
         self.scan_lbl.setText("—" if scanned is None else str(scanned))
@@ -231,11 +231,11 @@ class MasterPanel(QFrame):
         self._last_hb = None
         self._pulse = False
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(22, 14, 22, 16)
-        outer.setSpacing(10)
+        outer.setContentsMargins(16, 10, 16, 10)
+        outer.setSpacing(8)
 
         top = QHBoxLayout()
-        top.setSpacing(18)
+        top.setSpacing(14)
         left = QVBoxLayout()
         left.setSpacing(2)
         self.name_lbl = QLabel(f"{name}  ·  MASTER")
@@ -250,12 +250,12 @@ class MasterPanel(QFrame):
         top.addLayout(left)
         top.addStretch(1)
 
-        self.lamp = Lamp(30)
+        self.lamp = Lamp(24)
         top.addWidget(self.lamp)
         self.status_lbl = QLabel("OFFLINE")
         self.status_lbl.setObjectName("MasterStatus")
         top.addWidget(self.status_lbl)
-        top.addSpacing(20)
+        top.addSpacing(14)
 
         hb = QVBoxLayout()
         hb.setSpacing(0)
@@ -275,7 +275,7 @@ class MasterPanel(QFrame):
         self.reason_strip = QFrame()
         self.reason_strip.setObjectName("ReasonStrip")
         rlay = QHBoxLayout(self.reason_strip)
-        rlay.setContentsMargins(14, 9, 14, 9)
+        rlay.setContentsMargins(10, 6, 10, 6)
         self.reason_lbl = QLabel("")
         self.reason_lbl.setObjectName("Reason")
         self.reason_lbl.setWordWrap(True)
@@ -303,7 +303,7 @@ class MasterPanel(QFrame):
             f"QFrame#ReasonStrip {{ background: rgba(0,0,0,0.30); border: 1px solid {color}; border-radius: 8px; }}"
         )
         self.reason_lbl.setText(text)
-        self.reason_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {color}; background: transparent;")
+        self.reason_lbl.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {color}; background: transparent;")
 
     def pulse(self, value, mode: str = "toggle") -> None:
         """Update just the heartbeat indicator (called live from its own thread)."""
@@ -554,7 +554,7 @@ class MainWindow(QWidget):
         self.simulate = simulate
         self.kiosk = kiosk
         self.setWindowTitle("moreader — Manufacturing Order Verification")
-        self.resize(1180, 780)
+        self.resize(1024, 768)          # sized for a 15" 1024x768 panel (AB 6300P)
         self.setStyleSheet(STYLESHEET)
         if kiosk:
             self.setWindowFlag(Qt.FramelessWindowHint, True)
@@ -593,9 +593,9 @@ class MainWindow(QWidget):
     def _build_header(self) -> QWidget:
         header = QFrame()
         header.setObjectName("Header")
-        header.setFixedHeight(74)
+        header.setFixedHeight(56)
         lay = QHBoxLayout(header)
-        lay.setContentsMargins(22, 10, 22, 10)
+        lay.setContentsMargins(16, 6, 16, 6)
         box = QVBoxLayout()
         box.setSpacing(0)
         t = QLabel("moreader")
@@ -623,15 +623,15 @@ class MainWindow(QWidget):
     def _build_operator_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(22, 18, 22, 16)
-        lay.setSpacing(14)
+        lay.setContentsMargins(14, 8, 14, 10)
+        lay.setSpacing(10)
 
         self.shift_lbl = QLabel("")
-        self.shift_lbl.setStyleSheet(f"color: {MUTED}; font-size: 14px;")
+        self.shift_lbl.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
         lay.addWidget(self.shift_lbl)
 
         tiles_row = QHBoxLayout()
-        tiles_row.setSpacing(16)
+        tiles_row.setSpacing(12)
         self.tiles = []
         for enc in self.config.plc.encapsulators:
             tile = EncapsulatorTile(enc.name)
@@ -643,7 +643,7 @@ class MainWindow(QWidget):
         lay.addWidget(self.master_panel)
 
         button_row = QHBoxLayout()
-        button_row.setSpacing(16)
+        button_row.setSpacing(12)
         verify = QPushButton("VERIFY  MO")
         verify.setObjectName("Verify")
         verify.clicked.connect(self._verify_mo)
@@ -661,7 +661,7 @@ class MainWindow(QWidget):
         self.log = QPlainTextEdit()
         self.log.setObjectName("Log")
         self.log.setReadOnly(True)
-        self.log.setFixedHeight(120)
+        self.log.setFixedHeight(84)
         lay.addWidget(self.log)
         return page
 
@@ -768,7 +768,7 @@ class MainWindow(QWidget):
         bar.addWidget(self.test_btn)
         reload_btn = QPushButton("Reload")
         reload_btn.clicked.connect(self._load_config_into_widgets)
-        save_btn = QPushButton("Save & Apply")
+        save_btn = QPushButton("Save && Apply")
         save_btn.setObjectName("Primary")
         save_btn.clicked.connect(self._save_config)
         bar.addWidget(reload_btn)
