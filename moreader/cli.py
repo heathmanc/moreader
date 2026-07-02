@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--simulate", action="store_true", help="Use simulated PLCs (for demos/tests).")
     parser.add_argument("--kiosk", action="store_true",
                         help="Full-screen, frameless; closing requires the config password (factory station).")
+    parser.add_argument("--touch-keyboard", action="store_true",
+                        help="Pop up an on-screen touch keyboard when a text field is focused "
+                             "(automatic with --kiosk; set QT_IM_MODULE= empty to suppress).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -128,6 +132,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     except Exception:  # pragma: no cover - lock is best-effort
         lock = None
+
+    # On-screen touch keyboard (Qt Virtual Keyboard, bundled with PySide6) for
+    # stations with no physical keyboard.  Must be set before the QApplication
+    # is created; an explicit QT_IM_MODULE in the environment wins.
+    if args.kiosk or args.touch_keyboard:
+        os.environ.setdefault("QT_IM_MODULE", "qtvirtualkeyboard")
 
     try:
         from .gui_qt import launch

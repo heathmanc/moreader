@@ -494,6 +494,25 @@ class ScanDialog(QDialog):
         return dict(self.values)
 
 
+def prompt_text(parent, title: str, label: str, password: bool = False) -> tuple[str, bool]:
+    """A window-modal replacement for ``QInputDialog.getText``.
+
+    The on-screen touch keyboard (Qt Virtual Keyboard) lives in its own
+    top-level window, and an application-modal dialog blocks taps to it.
+    Window modality still locks the app behind the prompt but lets the
+    keyboard through, so a station with no physical keyboard can type here.
+    """
+
+    dlg = QInputDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    if password:
+        dlg.setTextEchoMode(QLineEdit.Password)
+    dlg.setWindowModality(Qt.WindowModal)
+    ok = dlg.exec() == QDialog.Accepted
+    return dlg.textValue(), ok
+
+
 class ScanErrorDialog(QDialog):
     """Full-screen-style red error screen shown when a scan fails."""
 
@@ -709,9 +728,9 @@ class MainWindow(QWidget):
             return
         turning_on = not self._master_bypassed
         verb = "enable" if turning_on else "clear"
-        password, ok = QInputDialog.getText(
+        password, ok = prompt_text(
             self, "Bypass — password required",
-            f"Enter password to {verb} MO bypass:", QLineEdit.Password,
+            f"Enter password to {verb} MO bypass:", password=True,
         )
         if not ok:
             return
@@ -722,11 +741,11 @@ class MainWindow(QWidget):
             self.worker.submit(CMD_BYPASS, "off")
             return
         # Turning bypass ON: capture who and why for the audit log.
-        name, ok = QInputDialog.getText(self, "Bypass — who", "Your name:")
+        name, ok = prompt_text(self, "Bypass — who", "Your name:")
         if not ok or not name.strip():
             QMessageBox.warning(self, "Bypass cancelled", "A name is required to bypass.")
             return
-        reason, ok = QInputDialog.getText(self, "Bypass — why", "Reason for bypass:")
+        reason, ok = prompt_text(self, "Bypass — why", "Reason for bypass:")
         if not ok or not reason.strip():
             QMessageBox.warning(self, "Bypass cancelled", "A reason is required to bypass.")
             return
@@ -734,8 +753,8 @@ class MainWindow(QWidget):
 
     # -- settings -------------------------------------------------------
     def _open_settings(self) -> None:
-        password, ok = QInputDialog.getText(
-            self, "Configuration locked", "Enter configuration password:", QLineEdit.Password
+        password, ok = prompt_text(
+            self, "Configuration locked", "Enter configuration password:", password=True
         )
         if not ok:
             return

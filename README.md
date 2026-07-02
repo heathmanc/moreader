@@ -161,6 +161,15 @@ Run with `--kiosk` for a factory station: full-screen, frameless, and the window
 can only be closed via the password-gated **Exit App** button in Settings. A
 single-instance lock prevents two copies fighting over the PLC writes.
 
+Kiosk mode also enables an **on-screen touch keyboard** (Qt Virtual Keyboard,
+bundled with PySide6 — note it is GPL-licensed) for stations with no physical
+keyboard: tapping any text field — the Settings password, the bypass
+name/reason prompts, every configuration field — pops the keyboard up along the
+bottom of the screen. Use `--touch-keyboard` to enable it without kiosk mode,
+or set `QT_IM_MODULE=` (empty) in the environment to suppress it on a station
+that has a real keyboard. The VERIFY MO scan popup has no text field, so no
+keyboard appears there — the operator still cannot type an order in by hand.
+
 ```bash
 python -m moreader --config config.yaml --kiosk
 ```
