@@ -589,6 +589,7 @@ class MainWindow(QWidget):
         self._master_bypassed = False
         self._error_open = False
         self._allow_close = not kiosk
+        self._scanner_connected = None      # None until first status refresh
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -625,6 +626,10 @@ class MainWindow(QWidget):
         box.addWidget(s)
         lay.addLayout(box)
         lay.addStretch(1)
+        self.scanner_summary = QLabel("Scanner: …")
+        self.scanner_summary.setObjectName("ConnSummary")
+        lay.addWidget(self.scanner_summary)
+        lay.addSpacing(18)
         self.conn_summary = QLabel("PLCs: …")
         self.conn_summary.setObjectName("ConnSummary")
         lay.addWidget(self.conn_summary)
@@ -700,12 +705,18 @@ class MainWindow(QWidget):
                 "mo", "SCAN MANUFACTURING ORDER",
                 "Scan the MO barcode. Its digits are matched to every encapsulator.",
             )]
-        # Serial scanner configured but the port could not be opened.
-        if self.config.scanner.type == "serial" and self.scan_source is None:
-            self._show_error("SCANNER NOT AVAILABLE",
-                             [self.scan_source_error or "The serial scanner could not be opened.",
-                              "Check the COM port and cable in Settings → Scanner."])
-            return
+        # Serial scanner configured but not usable (never opened, or unplugged).
+        if self.config.scanner.type == "serial":
+            if self.scan_source is None:
+                self._show_error("SCANNER NOT AVAILABLE",
+                                 [self.scan_source_error or "The serial scanner could not be opened.",
+                                  "Check the COM port and cable in Settings → Scanner."])
+                return
+            if not self.scan_source.connected:
+                self._show_error("SCANNER NOT CONNECTED",
+                                 ["The barcode scanner is unplugged or powered off.",
+                                  "Plug it back in and wait for “Scanner ● online” at the top, then scan again."])
+                return
         dialog = ScanDialog(steps, self, scan_source=self.scan_source)
         if dialog.exec() != QDialog.Accepted or not self.worker:
             return
@@ -1244,6 +1255,7 @@ class MainWindow(QWidget):
         self._close_scan_source()
         self.scan_source = None
         self.scan_source_error = ""
+        self._scanner_connected = None      # don't log a transition across a reconfigure
         if self.config.scanner.type != "serial":
             return
         try:
@@ -1316,6 +1328,29 @@ class MainWindow(QWidget):
 
     def _tick_clock(self) -> None:
         self.clock_lbl.setText(datetime.now().strftime("%a %H:%M:%S"))
+        self._refresh_scanner_status()
+
+    def _refresh_scanner_status(self) -> None:
+        """Reflect the live scanner link in the header and log its transitions."""
+        if self.config.scanner.type != "serial":
+            self.scanner_summary.setText("Scanner: keyboard")
+            self.scanner_summary.setStyleSheet(f"color: {MUTED}; font-weight: 600;")
+            self._scanner_connected = None
+            return
+        if self.scan_source is None:                       # pyserial missing / no source
+            state, text, color = False, "Scanner: ERROR", LOG_COLOR["alarm"]
+        elif self.scan_source.connected:
+            state, text, color = True, "Scanner ● online", LOG_COLOR["ok"]
+        else:
+            state, text, color = False, "Scanner ● OFFLINE", LOG_COLOR["alarm"]
+        self.scanner_summary.setText(text)
+        self.scanner_summary.setStyleSheet(f"color: {color}; font-weight: 600;")
+        if self._scanner_connected is not None and state != self._scanner_connected:
+            if state:
+                self._append_log("ok", "Barcode scanner reconnected.")
+            else:
+                self._append_log("alarm", "Barcode scanner disconnected — plug it back in.")
+        self._scanner_connected = state
 
     # -- lifecycle ------------------------------------------------------
     def closeEvent(self, event) -> None:

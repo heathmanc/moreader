@@ -207,7 +207,15 @@ class SerialScanSource:
 
     A daemon thread reads the port continuously and splits complete barcodes on
     CR/LF into a thread-safe queue.  The scan dialog flushes then polls it.
+
+    The reader is **self-healing**: if the scanner is unplugged the read fails,
+    the stale port handle is dropped, and the thread keeps trying to reopen the
+    configured port (~1 s cadence).  Plugging the scanner back into the same
+    port restores scanning with no operator action.  ``connected`` reflects the
+    live link state so the GUI can show a status indicator.
     """
+
+    RETRY_INTERVAL = 1.0     # seconds between reopen attempts while disconnected
 
     def __init__(self, port: str, baudrate: int) -> None:
         import queue
@@ -217,25 +225,59 @@ class SerialScanSource:
             import serial
         except ImportError as exc:  # pragma: no cover
             raise ScannerError("pyserial is required for a serial scanner: pip install pyserial") from exc
-        try:
-            self._serial = serial.Serial(port, baudrate, timeout=0.2)
-        except Exception as exc:  # pragma: no cover - depends on hardware
-            raise ScannerError(f"Could not open serial port {port!r}: {exc}") from exc
 
+        self._serial_mod = serial
+        self.port = port
+        self.baudrate = baudrate
+        self._serial = None
+        self._connected = False
         self._queue: "queue.Queue[str]" = queue.Queue()
-        self._running = True
+        self._stop = threading.Event()
+        # Best-effort first open so a scanner that is already plugged in reports
+        # "online" immediately instead of flickering through the offline state.
+        self._open()
         self._thread = threading.Thread(target=self._loop, name="SerialScan", daemon=True)
         self._thread.start()
 
-    def _loop(self) -> None:
-        import time
+    @property
+    def connected(self) -> bool:
+        return self._connected
 
+    def _open(self) -> bool:
+        try:
+            self._serial = self._serial_mod.Serial(self.port, self.baudrate, timeout=0.2)
+            self._connected = True
+            return True
+        except Exception:  # pragma: no cover - depends on hardware
+            self._serial = None
+            self._connected = False
+            return False
+
+    def _close_serial(self) -> None:
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            except Exception:  # pragma: no cover
+                pass
+            self._serial = None
+
+    def _loop(self) -> None:
         buffer = ""
-        while self._running:
+        while not self._stop.is_set():
+            if self._serial is None:
+                if not self._open():
+                    if self._stop.wait(self.RETRY_INTERVAL):   # still gone; retry
+                        break
+                    continue
+                buffer = ""
             try:
                 data = self._serial.read(128)
-            except Exception:  # pragma: no cover - transient port error
-                time.sleep(0.3)
+            except Exception:   # unplugged (or transient) — drop handle, reconnect
+                self._connected = False
+                self._close_serial()
+                buffer = ""
+                if self._stop.wait(0.5):
+                    break
                 continue
             if not data:
                 continue
@@ -262,11 +304,10 @@ class SerialScanSource:
             return None
 
     def close(self) -> None:
-        self._running = False
-        try:
-            self._serial.close()
-        except Exception:  # pragma: no cover
-            pass
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._close_serial()
 
 
 def build_scanner(cfg: ScannerConfig) -> BarcodeScanner:

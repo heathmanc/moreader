@@ -148,6 +148,15 @@ Two scanner types are supported (Settings → Scanner):
   Set the port (`COM4`, `/dev/ttyACM0`, …) and baud rate; barcodes are read over
   pyserial and delivered to the scan popup automatically.
 
+A serial scanner is monitored continuously and the header shows its live state
+(**Scanner ● online** / **Scanner ● OFFLINE**). The reader is **self-healing**:
+if the scanner is unplugged or loses power mid-shift, the port is dropped and
+reopened automatically, so plugging it back into the same COM port restores
+scanning with no restart and no trip into Settings. (On Windows the COM number
+is stable across replug; on Linux a replugged device can re-enumerate under a
+new node, so point the port at a stable `/dev/serial/by-id/...` path.) VERIFY MO
+tells the operator to reconnect if the scanner is down when they try to scan.
+
 ## Audit trail
 
 Every scan and gate change is appended to a daily CSV in `audit.directory`
