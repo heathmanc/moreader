@@ -188,6 +188,40 @@ On Windows, set that command as a **Task Scheduler** task "at log on" with
 `Heartbeat` DINT must be watchdogged in the PLC so the run permit drops if this
 application ever stops (see the safety note).
 
+## Windows installer / releases
+
+A GitHub Actions workflow (`.github/workflows/release.yml`) builds a standalone
+Windows `moreader.exe` with PyInstaller (no Python needed on the station) and
+wraps it in an Inno Setup installer.
+
+* **Cut a release:** push a tag like `v0.5.0`. The workflow runs the tests,
+  builds `moreader.exe` and `moreader-setup-0.5.0.exe`, and publishes a GitHub
+  Release with both attached.
+
+  ```bash
+  git tag v0.5.0 && git push origin v0.5.0
+  ```
+
+* **Test build without releasing:** run the workflow manually (Actions →
+  *Windows Release* → *Run workflow*); it uploads the exe and installer as build
+  artifacts and publishes nothing.
+
+The installer offers a desktop shortcut, a Start-menu **moreader (kiosk)**
+shortcut, and an optional "start in kiosk mode at log on" checkbox; it drops a
+`config.example.yaml` next to the program on first install. The app, its window,
+and the installer all carry the moreader icon (`moreader/assets/`, regenerate
+with `python scripts/make_icon.py`).
+
+To build an installer locally on a Windows box:
+
+```bat
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm --onefile --windowed --name moreader ^
+  --icon moreader/assets/icon.ico --add-data "moreader/assets;moreader/assets" ^
+  --collect-all PySide6 run_moreader.py
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.5.0 installer\moreader.iss
+```
+
 ## Install
 
 ```bash

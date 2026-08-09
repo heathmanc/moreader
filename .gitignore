@@ -7,5 +7,10 @@ venv/
 config.yaml
 *.log
 
+# Build artifacts (PyInstaller / installer)
+build/
+dist/
+*.spec
+
 # Audit logs
 logs/

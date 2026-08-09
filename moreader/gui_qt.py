@@ -136,6 +136,20 @@ QLineEdit#ScanField {{ font-size: 28px; padding: 16px; font-family: 'Consolas', 
 """
 
 
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+
+def app_icon():
+    """The application/window icon, loaded from the packaged assets."""
+    from PySide6.QtGui import QIcon
+
+    for name in ("icon.ico", "icon.png"):
+        path = ASSETS_DIR / name
+        if path.exists():
+            return QIcon(str(path))
+    return QIcon()
+
+
 class Lamp(QLabel):
     def __init__(self, size: int = 26) -> None:
         super().__init__()
@@ -573,6 +587,7 @@ class MainWindow(QWidget):
         self.simulate = simulate
         self.kiosk = kiosk
         self.setWindowTitle("moreader — Manufacturing Order Verification")
+        self.setWindowIcon(app_icon())
         self.resize(1024, 768)          # sized for a 15" 1024x768 panel (AB 6300P)
         self.setStyleSheet(STYLESHEET)
         if kiosk:
@@ -1369,7 +1384,18 @@ def launch(config: Config, config_path: Path, simulate: bool = False, kiosk: boo
 
     from PySide6.QtWidgets import QApplication
 
+    # Windows: give the process its own taskbar identity so our icon is shown
+    # (grouped under moreader) instead of the generic Python icon.
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("moreader.hmi")
+        except Exception:  # pragma: no cover - best effort
+            pass
+
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setWindowIcon(app_icon())
     window = MainWindow(config, config_path, simulate=simulate, kiosk=kiosk)
     if kiosk:
         window.showFullScreen()
