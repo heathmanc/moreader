@@ -20,6 +20,9 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+; ISCC resolves relative paths from the script's directory; anchor at the repo
+; root so dist\ and moreader\assets\ below resolve correctly.
+SourceDir={#SourcePath}\..
 OutputDir=dist
 OutputBaseFilename=moreader-setup-{#MyAppVersion}
 SetupIconFile=moreader\assets\icon.ico
